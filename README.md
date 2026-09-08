@@ -2,7 +2,7 @@
 
 Projet du cours **Protocoles de Sécurité Réseau** — Master 1, Université de Kinshasa (2026).
 
-**Groupe 13 — Cryptographie appliquée**
+**Groupe 13 — Protocol de securité**
 
 
 | THEYTHEY KAMBALE | |
