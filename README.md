@@ -4,11 +4,10 @@ Projet du cours **Protocoles de Sécurité Réseau** — Master 1, Université d
 
 **Groupe 13 — Protocol de securité**
 
+THEYTHEY KAMBALE DIVIN
 
-| THEYTHEY KAMBALE | |
 
-
-- **Site déployé** : *(à compléter)*
+- **Site déployé** : https://gestionnaire-secrets.onrender.com
 - **Dépôt** : https://github.com/Wabaya243/gestionnaire-secrets
 
 ---
@@ -145,11 +144,31 @@ dernière étant plafonnée par les appareils modestes.
 
 ## 9. Déploiement
 
-*(à compléter)*
+Hébergé sur **Render** (région Frankfurt), en service unique : FastAPI
+sert l'API et les fichiers statiques du build React. Cette architecture
+mono-origine évite CORS et permet un cookie `SameSite=Lax`.
+
+| Élément | Valeur |
+|---|---|
+| Build Command | `./build.sh` |
+| Start Command | `cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Base | PostgreSQL 16 (plan gratuit) |
+| HTTPS/TLS | Certificat automatique fourni par Render |
+
+Le script `build.sh` compile le frontend avec Vite, copie le résultat
+dans `backend/static`, puis installe les dépendances Python.
+
+**Note** : le plan gratuit met le service en veille après 15 minutes
+d'inactivité. Le premier chargement peut demander 30 à 50 secondes.
 
 ## 10. Identifiants de démonstration
 
-*(à compléter)*
+- **Email** : `demo@exemple.cd`
+- **Mot de passe maître** : *(à renseigner)*
+
+Ce compte contient uniquement des données fictives. La double
+authentification y est activée afin de permettre une connexion
+avec accès à un téléphone. du coup vous pouvez creer la vautre
 
 ## 11. Limites connues
 
@@ -163,6 +182,10 @@ dernière étant plafonnée par les appareils modestes.
 - **Serveur malveillant** : il sert le JavaScript et pourrait en servir
   une version modifiée.
 - **Absence de migrations** : le schéma est créé par `create_all`.
+- **Base de données temporaire** : le plan PostgreSQL gratuit de Render
+  expire 30 jours après sa création.
+- **Poids du bundle** : environ 1 Mo, dû au dictionnaire zxcvbn et au
+  binaire WASM d'Argon2. Un chargement différé de zxcvbn le réduirait.
 
 ## 12. Dépendances externes
 
