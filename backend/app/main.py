@@ -1,6 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -38,7 +41,7 @@ app.add_middleware(SlowAPIMiddleware)
 
 #  En-têtes de sécurité 
 
-app.middleware("http")
+@app.middleware("http")
 async def security_headers(request, call_next):
     """
     Ajoute les en-têtes défensifs à CHAQUE réponse.
@@ -69,6 +72,13 @@ async def security_headers(request, call_next):
 app.include_router(auth.router)
 app.include_router(vault.router)
 
+
+
+@app.get("/api/health")
+def health():   
+    
+    return {"status": "ok"}
+
 # Le build React est copié ici par le script de déploiement.
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
@@ -98,7 +108,3 @@ if STATIC_DIR.exists():
 
         return FileResponse(STATIC_DIR / "index.html")
 
-app.get("/api/health")
-def health():   
-    
-    return {"status": "ok"}
