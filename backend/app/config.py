@@ -27,11 +27,17 @@ class Settings(BaseSettings):
     def db_url(self) -> str:
         """
         Render fournit DATABASE_URL au format postgres://
-        SQLAlchemy exige postgresql:// — on corrige au vol.
+        SQLAlchemy attend postgresql:// et, sans précision, cherche
+        le pilote psycopg2. Nous utilisons psycopg 3, d'où le suffixe
+        +psycopg qui l'indique explicitement.
         """
         url = self.DATABASE_URL
+
         if url.startswith("postgres://"):
-            url = url.replace("postgres://", "postgresql://", 1)
+            url = url.replace("postgres://", "postgresql+psycopg://", 1)
+        elif url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+
         return url
 
 
