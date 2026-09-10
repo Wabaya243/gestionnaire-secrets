@@ -23,5 +23,17 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
 
+    @property
+    def db_url(self) -> str:
+        """
+        Render fournit DATABASE_URL au format postgres://
+        SQLAlchemy exige postgresql:// — on corrige au vol.
+        """
+        url = self.DATABASE_URL
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+        return url
+
+
 
 settings = Settings()

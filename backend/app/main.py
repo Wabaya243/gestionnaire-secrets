@@ -69,6 +69,35 @@ async def security_headers(request, call_next):
 app.include_router(auth.router)
 app.include_router(vault.router)
 
+# Le build React est copié ici par le script de déploiement.
+STATIC_DIR = Path(__file__).parent.parent / "static"
+
+if STATIC_DIR.exists():
+    # Les fichiers compilés (JS, CSS, WASM) vivent dans /assets
+    app.mount(
+        "/assets",
+        StaticFiles(directory=STATIC_DIR / "assets"),
+        name="assets",
+    )
+
+    @app.get("/{full_path:path}")
+    def serve_spa(full_path: str):
+        """
+        Renvoie index.html pour toute route inconnue.
+        React gère la navigation côté client : le serveur doit donc
+        servir la même page quel que soit le chemin demandé.
+
+        Cette route est déclarée EN DERNIER : FastAPI teste les routes
+        dans l'ordre, donc /api/... est traité avant d'arriver ici.
+        """
+        # Sécurité : on ne laisse jamais cette route intercepter l'API,
+        # sinon une faute de frappe dans une URL renverrait du HTML
+        # au lieu d'un 404 JSON.
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Route inconnue")
+
+        return FileResponse(STATIC_DIR / "index.html")
+
 app.get("/api/health")
 def health():   
     

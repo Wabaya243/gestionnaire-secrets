@@ -2,10 +2,10 @@ from sqlmodel import create_engine, Session, SQLModel
 from app.config import settings
 
 # Si on utilise SQLite, on désactive la vérification des threads (nécessaire pour FastAPI)
-connect_args = {"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
+connect_args = {"check_same_thread": False} if settings.db_url.startswith("sqlite") else {}
 
 # Création du "moteur" : c'est l'interface principale qui gère la communication avec la base de données
-engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
+engine = create_engine(settings.db_url, connect_args=connect_args)
 
 
 def init_db() -> None:
