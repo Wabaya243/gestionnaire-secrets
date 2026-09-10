@@ -1,8 +1,27 @@
 import { useEffect, useMemo } from 'react';
 import zxcvbn from 'zxcvbn';
 
+
 const LABELS = ['Très faible', 'Faible', 'Moyen', 'Fort', 'Très fort'];
-const COLORS = ['#c0392b', '#e67e22', '#f1c40f', '#27ae60', '#16a085'];
+
+// La couleur suit le seuil d'acceptation (MIN_SCORE = 3) plutôt qu'un
+// dégradé décoratif : rouge tant que le mot de passe serait refusé,
+// emerald dès qu'il passe. Classes écrites en entier, sinon Tailwind
+// ne les voit pas au moment où il scanne les sources.
+const BARS = [
+  'w-1/5 bg-red-600',
+  'w-2/5 bg-red-500',
+  'w-3/5 bg-red-400',
+  'w-4/5 bg-emerald-600',
+  'w-full bg-emerald-500',
+];
+const TEXTS = [
+  'text-red-400',
+  'text-red-400',
+  'text-red-300',
+  'text-emerald-400',
+  'text-emerald-400',
+];
 
 export default function StrengthMeter({ password, onScore }) {
   // useMemo : zxcvbn est coûteux, on ne recalcule que si le mot de passe change.
@@ -20,19 +39,19 @@ export default function StrengthMeter({ password, onScore }) {
   if (!result) return null;
 
   return (
-    <div style={{ marginTop: 8 }}>
-      <div style={{ height: 6, background: '#eee', borderRadius: 3 }}>
-        <div style={{
-          width: `${(result.score + 1) * 20}%`,
-          height: '100%',
-          background: COLORS[result.score],
-          borderRadius: 3,
-          transition: 'width .2s',
-        }} />
+    <div className="mt-2">
+      <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-800">
+        <div className={`h-full rounded-full transition-all duration-200 ${BARS[result.score]}`} />
       </div>
-      <small style={{ color: COLORS[result.score] }}>{LABELS[result.score]}</small>
+
+      <small className={`mt-1.5 block text-xs ${TEXTS[result.score]}`}>
+        {LABELS[result.score]}
+      </small>
+
       {result.feedback.warning && (
-        <div><small>{result.feedback.warning}</small></div>
+        <div>
+          <small className="text-xs text-zinc-400">{result.feedback.warning}</small>
+        </div>
       )}
     </div>
   );

@@ -79,10 +79,24 @@ class MfaSetupOut(BaseModel):
 class MfaActivateIn(BaseModel):
     """Confirmation de l'activation du 2FA par l'utilisateur."""
     totp_code: str = Field(min_length=6, max_length=6)       # Premier code saisi pour prouver la config
-    totp_secret_enc: str = Field(max_length=MAX_BLOB)        # Secret TOTP chiffré avec la clé du client
+    @field_validator("totp_code")
+    @classmethod
+    def only_digits(cls, v: str) -> str:
+        if not v.isdigit():
+            raise ValueError("code TOTP invalide")
+        return v
 
 
-# Coffre 
+# Profil
+
+class MeOut(BaseModel):
+    """Informations du compte connecté : aucune donnée sensible n'est exposée."""
+    email: EmailStr
+    mfa_enabled: bool
+    created_at: datetime
+
+
+# Coffre
 
 class VaultItemIn(BaseModel):
     """Création ou mise à jour d'un secret (le serveur ne voit que des octets chiffrés)."""

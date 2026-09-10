@@ -18,7 +18,7 @@ class User(SQLModel, table=True):
     auth_hash: str     # Empreinte Argon2id calculée par le serveur sur le hash reçu
 
     # Authentification multifacteur (MFA / 2FA)
-    topt_secret: Optional[str] = None  # Secret TOTP (base64)
+    totp_secret: Optional[str] = None  # Secret TOTP (base64)
     mfa_enabled: bool = Field(default=False)
 
     # Protection contre les attaques par force brute

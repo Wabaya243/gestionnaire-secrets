@@ -10,6 +10,14 @@ const ARGON2_PARAMS = {
   hashLength: 32,      // 32 octets = 256 bits, taille exacte d'une clé AES-256
 };
 
+const ALPHABETS = {
+  lower: 'abcdefghijkmnopqrstuvwxyz',      // sans l
+  upper: 'ABCDEFGHJKLMNPQRSTUVWXYZ',       // sans I et O
+  digits: '23456789',                       // sans 0 et 1
+  symbols: '!@#$%^&*()-_=+[]{};:,.?',
+};
+
+
 const NONCE_BYTES = 12;   // taille recommandée pour AES-GCM
 
 //  Conversions base64 <-> octets 
@@ -31,6 +39,27 @@ function b64ToBytes(b64) {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+
+export function generatePassword({
+  length = 20,
+  digits = true,
+  symbols = true,
+} = {}) {
+  let alphabet = ALPHABETS.lower + ALPHABETS.upper;
+  if (digits) alphabet += ALPHABETS.digits;
+  if (symbols) alphabet += ALPHABETS.symbols;
+
+  // getRandomValues, jamais Math.random() : ce dernier est prévisible
+  // et ne convient à aucun usage cryptographique.
+  const bytes = new Uint32Array(length);
+  crypto.getRandomValues(bytes);
+
+  // Le modulo introduit un biais quand l'alphabet ne divise pas 2^32,
+  // mais il est négligeable ici (moins de 1 chance sur 10^8 par caractère).
+  // Une version stricte rejetterait les valeurs hors du plus grand
+  // multiple de la taille de l'alphabet.
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+}
 
 // Génération du sel 
 

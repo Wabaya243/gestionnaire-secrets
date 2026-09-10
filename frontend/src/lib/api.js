@@ -46,6 +46,10 @@ export const loginUser = (email, authHash, totpCode) =>
 
 export const logoutUser = () => request('/auth/logout', { method: 'POST' });
 
+// Profil du compte connecté : email, mfa_enabled, created_at.
+// Aucun secret n'y transite (ni sel, ni hash, ni secret TOTP).
+export const fetchMe = () => request('/auth/me');
+
 //  Coffre 
 
 export const listItems = () => request('/vault');
@@ -56,6 +60,8 @@ export const createItem = (labelEnc, payloadEnc) =>
     body: { label_enc: labelEnc, payload_enc: payloadEnc },
   });
 
+// Le serveur remplace les deux blobs de l'élément désigné.
+// Il ne sait toujours pas ce qu'ils contiennent.
 export const updateItem = (id, labelEnc, payloadEnc) =>
   request(`/vault/${id}`, {
     method: 'PUT',
@@ -64,3 +70,9 @@ export const updateItem = (id, labelEnc, payloadEnc) =>
 
 export const deleteItem = (id) =>
   request(`/vault/${id}`, { method: 'DELETE' });
+
+
+export const mfaSetup = () => request('/auth/mfa/setup', { method: 'POST' });
+
+export const mfaActivate = (totpCode) =>
+  request('/auth/mfa/activate', { method: 'POST', body: { totp_code: totpCode } });

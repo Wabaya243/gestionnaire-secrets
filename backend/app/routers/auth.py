@@ -9,7 +9,7 @@ from app.database import get_session
 from app.deps import COOKIE_NAME, current_user
 from app.models import User
 from app.schemas import (
-    LoginIn, LoginOut, MfaActivateIn, MfaSetupOut,
+    LoginIn, LoginOut, MeOut, MfaActivateIn, MfaSetupOut,
     RegisterIn, SaltIn, SaltOut,
 )
 from app.security import (
@@ -154,3 +154,82 @@ def logout(response: Response):
     """Révoque la session côté client en supprimant le cookie d'authentification."""
     response.delete_cookie(COOKIE_NAME, path="/")
     return {"status": "ok"}
+
+
+#  Profil
+
+@router.get("/me", response_model=MeOut)
+def me(user: User = Depends(current_user)):
+    """Renvoie les informations du compte connecté (ni sel, ni hash, ni secret TOTP)."""
+    return MeOut(
+        email=user.email,
+        mfa_enabled=user.mfa_enabled,
+        created_at=user.created_at,
+    )
+
+
+@router.post("/mfa/setup", response_model=MfaSetupOut)
+def mfa_setup(
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Génère un secret TOTP et le stocke SANS activer le MFA.
+    Tant que mfa_enabled reste False, la connexion ne le demande pas :
+    l'utilisateur peut abandonner sans se bloquer.
+    """
+    if user.mfa_enabled:
+        raise HTTPException(status_code=409, detail="MFA déjà actif")
+
+    secret = generate_totp_secret()
+    user.totp_secret = secret
+    session.add(user)
+    session.commit()
+
+    return MfaSetupOut(
+        secret=secret,
+        provisioning_uri=totp_provisioning_uri(secret, user.email),
+    )
+
+
+@router.post("/mfa/activate")
+@limiter.limit("10/minute")          # anti-brute-force sur les 6 chiffres
+def mfa_activate(
+    request: Request,
+    data: MfaActivateIn,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Active le MFA seulement après preuve que l'appli a bien le secret."""
+    if not user.totp_secret:
+        raise HTTPException(status_code=400, detail="Configuration absente")
+
+    if not verify_totp(user.totp_secret, data.totp_code):
+        raise HTTPException(status_code=400, detail="Code invalide")
+
+    user.mfa_enabled = True
+    session.add(user)
+    session.commit()
+    return {"status": "enabled"}
+
+
+@router.post("/mfa/disable")
+@limiter.limit("5/minute")
+def mfa_disable(
+    request: Request,
+    data: MfaActivateIn,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Désactiver exige un code valide : sinon quiconque vole un cookie
+    de session pourrait retirer le second facteur.
+    """
+    if not verify_totp(user.totp_secret, data.totp_code):
+        raise HTTPException(status_code=400, detail="Code invalide")
+
+    user.mfa_enabled = False
+    user.totp_secret = None          # on efface, pas seulement le drapeau
+    session.add(user)
+    session.commit()
+    return {"status": "disabled"}
