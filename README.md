@@ -191,7 +191,7 @@ Paramètres retenus : `m=64 Mio, t=10, p=1`.
 ## Identifiants de démonstration
 
 - **Email** : `demo@exemple.cd`
-- **Mot de passe maître** : *(à renseigner)*
+- **Mot de passe maître** : *Demotest01*
 
 Ce compte contient uniquement des données fictives.
 La double authentification **n'est pas activée** sur ce compte afin que
