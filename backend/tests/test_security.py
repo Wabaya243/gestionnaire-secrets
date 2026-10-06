@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlmodel import create_engine, Session, select
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from app.models import User, AuditEvent, EncryptedFile, FileShare, utcnow
+from app.models import User, AuditEvent, VaultItem, SharingKey, EncryptedFile, FileShare, utcnow
 from app.migrations import migrate
 from app.config import settings
 from app.security import create_access_token
@@ -42,7 +42,8 @@ def test_legacy_migration_preserves_secrets(tmp_path):
         row = c.execute(text('SELECT auth_hash, kdf_salt, failed_attempts, is_admin, is_active, session_version FROM user')).one()
         assert tuple(row) == ('old-hash', 'old-salt', 2, 0, 1, 0)
         assert c.execute(text('SELECT payload_enc FROM vaultitem')).scalar_one() == 'original-secret-blob'
-        assert c.execute(text('SELECT COUNT(*) FROM schema_revision')).scalar_one() == 1
+        assert c.execute(text('SELECT COUNT(*) FROM schema_revision')).scalar_one() == 2
+        assert c.execute(text('SELECT suspended_until FROM user')).scalar_one() is None
 
 
 def test_upload_idor_and_metadata_isolation(clients):
@@ -118,6 +119,70 @@ def test_admin_disable_revokes_old_sessions_even_after_reenable(clients, db):
     assert admin.get('/api/admin/overview').status_code == 403
 
 
+def test_admin_search_promote_requires_mfa_and_revokes_session(clients, db):
+    owner, recipient, _, admin = clients
+    assert owner.get('/api/admin/users?q=user1').status_code == 403
+    assert admin.get('/api/admin/users?q=user1').json()['total'] == 1
+    assert admin.get('/api/admin/users?q=%25').json()['total'] == 0  # literal percent, not SQL wildcard
+    target_id = admin.get('/api/admin/users?q=user1').json()['items'][0]['id']
+    assert admin.post(f'/api/admin/users/{target_id}/promote').status_code == 409
+    with Session(db) as s:
+        target = s.get(User, target_id); target.mfa_enabled = True; s.add(target); s.commit()
+    assert admin.post(f'/api/admin/users/{target_id}/promote').status_code == 200
+    assert recipient.get('/api/auth/me').status_code == 401
+    recipient.cookies.set('access_token', create_access_token(target_id, 1))
+    assert recipient.get('/api/auth/me').json()['is_admin'] is True
+    assert recipient.get('/api/admin/users').status_code == 200
+    assert admin.patch(f'/api/admin/users/{target_id}/state', json={'is_active': False}).status_code == 409
+    assert admin.delete(f'/api/admin/users/{target_id}').status_code == 409
+    assert admin.delete(f'/api/admin/users/{admin.get("/api/auth/me").json()["id"]}').status_code == 409
+
+
+def test_timed_suspension_expires_and_reactivation_revokes_old_tokens(clients, db, public_key):
+    owner, recipient, _, admin = clients
+    item = file_body(); assert owner.post('/api/files', json=item).status_code == 201
+    assert create_share(owner, recipient, item, public_key).status_code == 201
+    uid = admin.get('/api/admin/users').json()['items'][0]['id']
+    assert admin.patch(f'/api/admin/users/{uid}/state', json={'is_active': True, 'suspend_minutes': 60}).status_code == 422
+    assert admin.patch(f'/api/admin/users/{uid}/state', json={'is_active': False, 'suspend_minutes': 60}).status_code == 200
+    assert owner.get('/api/dashboard').status_code == 401
+    assert recipient.get(f'/api/files/{item["id"]}/content').status_code == 404
+    listing = admin.get('/api/admin/users?q=user0').json()['items'][0]
+    assert not listing['is_available'] and listing['suspended_until']
+    with Session(db) as s:
+        target = s.get(User, uid); target.suspended_until = utcnow() - timedelta(minutes=1); s.add(target); s.commit()
+    assert owner.get('/api/dashboard').status_code == 401  # old JWT must remain revoked
+    assert recipient.get(f'/api/files/{item["id"]}/content').status_code == 200
+    owner.cookies.set('access_token', create_access_token(uid, 1))
+    assert owner.get('/api/dashboard').status_code == 200
+    assert admin.get('/api/admin/users?q=user0').json()['items'][0]['is_available']
+    assert admin.patch(f'/api/admin/users/{uid}/state', json={'is_active': False}).status_code == 200
+    assert admin.patch(f'/api/admin/users/{uid}/state', json={'is_active': True}).status_code == 200
+    assert owner.get('/api/dashboard').status_code == 401
+
+
+def test_admin_delete_removes_blobs_and_shares_without_orphans(clients, db, public_key):
+    owner, recipient, _, admin = clients
+    item = file_body(); assert owner.post('/api/files', json=item).status_code == 201
+    assert create_share(owner, recipient, item, public_key).status_code == 201
+    secret = {'label_enc': b64(b'L' * 40), 'payload_enc': b64(b'P' * 60)}
+    assert owner.post('/api/vault', json=secret).status_code == 201
+    uid = admin.get('/api/admin/users?q=user0').json()['items'][0]['id']
+    assert owner.delete(f'/api/admin/users/{uid}').status_code == 403
+    assert admin.delete(f'/api/admin/users/{uid}').status_code == 204
+    assert admin.delete(f'/api/admin/users/{uid}').status_code == 404
+    assert owner.get('/api/dashboard').status_code == 401
+    assert recipient.get(f'/api/files/{item["id"]}/content').status_code == 404
+    with Session(db) as s:
+        assert s.get(User, uid) is None
+        assert s.exec(select(EncryptedFile)).all() == []
+        assert s.exec(select(FileShare)).all() == []
+        assert s.exec(select(VaultItem).where(VaultItem.user_id == uid)).all() == []
+        assert s.get(SharingKey, uid) is None
+        assert s.exec(select(AuditEvent).where(AuditEvent.user_id == uid)).all() == []
+        assert s.exec(select(AuditEvent).where(AuditEvent.target_user_id == uid)).all() == []
+
+
 def test_disabled_owner_suspends_shared_files(clients, public_key):
     owner, recipient, _, admin = clients
     item = file_body(); owner.post('/api/files', json=item)
@@ -144,6 +209,47 @@ def test_admin_unlock_and_failed_totp_persistent_lockout(clients, db):
     with Session(db) as s:
         assert s.get(User, uid).locked_until is None
         assert s.get(User, uid).failed_attempts == 0
+
+
+def test_mfa_disable_needs_valid_code_and_can_be_reenabled(clients, db):
+    owner, _, _, admin = clients
+    secret = pyotp.random_base32()
+    with Session(db) as s:
+        person = s.exec(select(User).where(User.email == 'user0@example.cd')).one()
+        person.totp_secret = secret
+        person.mfa_enabled = True
+        s.add(person)
+        s.commit()
+        uid = person.id
+
+    bad = '000000' if not pyotp.TOTP(secret).verify('000000', valid_window=1) else '999999'
+    assert owner.post('/api/auth/mfa/disable', json={'totp_code': bad}).status_code == 400
+    with Session(db) as s:
+        assert s.get(User, uid).mfa_enabled is True
+        assert s.get(User, uid).totp_secret == secret
+
+    assert owner.post('/api/auth/mfa/disable', json={'totp_code': pyotp.TOTP(secret).now()}).status_code == 200
+    assert owner.get('/api/auth/me').json()['mfa_enabled'] is False
+    with Session(db) as s:
+        assert s.get(User, uid).totp_secret is None
+    assert owner.post('/api/auth/mfa/disable', json={'totp_code': bad}).status_code == 409
+
+    setup = owner.post('/api/auth/mfa/setup')
+    assert setup.status_code == 200
+    new_secret = setup.json()['secret']
+    assert new_secret != secret
+    assert owner.post('/api/auth/mfa/activate', json={'totp_code': pyotp.TOTP(new_secret).now()}).status_code == 200
+    assert owner.get('/api/auth/me').json()['mfa_enabled'] is True
+
+    # The same mechanism removes admin access until MFA is enabled again.
+    with Session(db) as s:
+        person = s.exec(select(User).where(User.email == 'user3@example.cd')).one()
+        person.totp_secret = secret
+        s.add(person)
+        s.commit()
+    assert admin.get('/api/admin/overview').status_code == 200
+    assert admin.post('/api/auth/mfa/disable', json={'totp_code': pyotp.TOTP(secret).now()}).status_code == 200
+    assert admin.get('/api/admin/overview').status_code == 403
 
 
 def test_payload_limits_csrf_and_overposting(clients, monkeypatch):

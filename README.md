@@ -228,12 +228,23 @@ le correcteur puisse se connecter sans application TOTP.
 - **Partage** : enveloppe RSA-3072-OAEP/SHA-256 de la clé du fichier pour le destinataire,
   clé privée protégée par la clé du coffre, comparaison d'empreinte par un canal indépendant,
   révocation des téléchargements futurs.
-- **Migration** : révision additive `001_files_dashboards` appliquée au démarrage,
+- **MFA** : activation et désactivation depuis le tableau de bord ; la désactivation
+  demande un code TOTP valide et efface l'ancien secret TOTP.
+- **Administration** : recherche par adresse, promotion avec MFA, suspension pour 1 heure,
+  24 heures ou 7 jours, désactivation jusqu’à réactivation, suppression définitive des
+  comptes ordinaires avec leurs données chiffrées. Une nouvelle connexion est exigée
+  après promotion ou suspension. Les admins ne peuvent pas être supprimés via l’interface.
+- **Migration** : révisions additives `001_files_dashboards` et `002_admin_controls` appliquées au démarrage,
   sans modification des secrets chiffrés existants. Sauvegarder la base avant déploiement.
 
 L'admin ne peut jamais lire les secrets ou fichiers d'autres comptes par son rôle.
 Le partage de fichiers est un accès accordé au destinataire ; il conserve les données
 chez l'expéditeur. Révoquer ne supprime pas les copies déjà téléchargées.
+Un compte déjà inscrit doit d'abord ouvrir **Fichiers → Activer la réception sécurisée**
+dans son propre navigateur avant de pouvoir recevoir. Le bouton du compte expéditeur
+ne crée que la clé de réception de l'expéditeur.
+On ne peut pas partager un fichier avec sa propre adresse : il figure déjà dans
+« Mes fichiers ». Pour tester, envoyer depuis un compte vers un second compte.
 
 Le compte administrateur doit être créé depuis le navigateur et avoir activé son MFA.
 Depuis le dossier `backend`, dans la console serveur :
@@ -243,6 +254,8 @@ python -m app.manage grant-admin ton-adresse@example.cd
 ```
 
 Puis se reconnecter. Il n'existe pas de compte admin par défaut.
+Un administrateur déjà connecté peut ensuite promouvoir d’autres comptes actifs ayant
+activé le MFA depuis son tableau de bord ; ces comptes doivent se reconnecter.
 
 La conception, les limites, les commandes de vérification et les réponses pour
 la défense orale sont détaillées dans [docs/EXTENSIONS_ZERO_KNOWLEDGE.md](docs/EXTENSIONS_ZERO_KNOWLEDGE.md).

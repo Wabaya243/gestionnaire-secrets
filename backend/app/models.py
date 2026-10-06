@@ -28,6 +28,7 @@ class User(SQLModel, table=True):
 
     is_admin: bool = Field(default=False)
     is_active: bool = Field(default=True)
+    suspended_until: Optional[datetime] = None
     session_version: int = Field(default=0)
     last_login_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=utcnow)

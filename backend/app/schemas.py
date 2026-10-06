@@ -189,3 +189,4 @@ class RecipientIn(StrictIn):
 
 class AccountStateIn(StrictIn):
     is_active: bool
+    suspend_minutes: Optional[int] = Field(default=None, ge=1, le=525600)

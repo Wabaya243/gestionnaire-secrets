@@ -9,6 +9,7 @@ from app.database import get_session
 from app.deps import COOKIE_NAME, current_user
 from app.models import User, utcnow
 from app.audit import record
+from app.account_state import account_available
 from app.schemas import (
     LoginIn, LoginOut, MeOut, MfaActivateIn, MfaSetupOut,
     RegisterIn, SaltIn, SaltOut,
@@ -109,7 +110,7 @@ def login(
         hash_auth(data.auth_hash)
         raise BAD_CREDENTIALS
 
-    if not user.is_active:
+    if not account_available(user):
         verify_auth(user.auth_hash, data.auth_hash)
         raise BAD_CREDENTIALS
 
@@ -241,6 +242,9 @@ def mfa_disable(
     Désactiver exige un code valide : sinon quiconque vole un cookie
     de session pourrait retirer le second facteur.
     """
+    if not user.mfa_enabled or not user.totp_secret:
+        raise HTTPException(status_code=409, detail="MFA non actif")
+
     if not verify_totp(user.totp_secret, data.totp_code):
         raise HTTPException(status_code=400, detail="Code invalide")
 

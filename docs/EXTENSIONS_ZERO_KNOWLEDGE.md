@@ -41,6 +41,12 @@ faite localement dans le navigateur.
 L'activité contient des actions prédéfinies et des identifiants : jamais le nom
 d'un fichier, un libellé, une clé, un mot de passe, un blob ou une adresse IP. Le
 journal commence avec cette version ; les anciennes actions ne sont pas inventées.
+
+Le même écran permet d'activer le MFA après validation d'un premier code TOTP,
+ou de le désactiver après saisie d'un code valide. La désactivation efface le
+secret TOTP côté serveur ; une activation ultérieure produit un nouveau secret
+et un nouveau QR. Un administrateur qui retire son MFA perd l'accès aux routes
+d'administration jusqu'à sa réactivation, même si son rôle reste attribué.
 Un événement `file.downloaded` signifie que le serveur a servi le **blob chiffré**,
 pas que le destinataire a réussi son déchiffrement. Les lectures hors ligne ne sont
 pas observables. Les anciens journaux restent actuellement en base ; une politique
@@ -49,9 +55,11 @@ journal applicatif n'est pas une preuve inviolable face à un administrateur de 
 
 ## 3. Administration
 
-`is_admin` est attribué uniquement depuis la console serveur. Aucun formulaire ni
-endpoint public ne peut promouvoir un compte. Le garde `admin_user` contrôle le
-rôle **en base** et exige un MFA actif. Masquer un onglet React n'est pas un contrôle
+Le premier administrateur est attribué depuis la console serveur. Ensuite un admin
+connecté, avec MFA actif, peut promouvoir un compte déjà actif dont le MFA est lui aussi
+actif. La promotion révoque les anciennes sessions du nouveau compte admin. Aucun endpoint
+public ne permet l’auto-promotion. Le garde `admin_user` contrôle le rôle **en base**
+et exige un MFA actif. Masquer un onglet React n'est pas un contrôle
 d'accès : même un appel HTTP direct doit être refusé.
 
 La désactivation incrémente `session_version`. Le JWT inclut la version ; chaque
@@ -64,6 +72,21 @@ Le déblocage remet à zéro `failed_attempts` et `locked_until`, sans changer l
 de passe ni le MFA. Les comptes administrateurs ne peuvent pas être désactivés via
 le tableau de bord : leur rôle se gère depuis la console pour éviter de supprimer
 accidentellement tout accès administrateur. Les actions sont journalisées.
+
+La recherche par adresse s’effectue uniquement dans l’interface admin et sur le
+serveur, avec pagination et compteur filtrés. La suspension temporaire stocke
+`suspended_until` en UTC ; un accès redevient possible à l’échéance sans tâche de fond,
+mais les anciens JWT restent invalides car `session_version` a changé. La suspension
+indéfinie conserve `is_active=false` jusqu’à réactivation manuelle. Les requêtes
+de partage et de téléchargement contrôlent également l’échéance du compte propriétaire
+ou destinataire.
+
+La suppression d’un compte ordinaire efface ses secrets et fichiers chiffrés,
+son identité privée chiffrée, les accès qu’il a accordés et reçus, ainsi que ses
+événements personnels. Les références au compte dans d’autres événements sont
+effacées ; un événement admin avec l’identifiant du compte supprimé trace l’action.
+Cette opération est irréversible et ne restitue aucun contenu en clair. Un compte
+admin doit d’abord être rétrogradé depuis la console serveur avant suppression.
 
 ## 4. Chiffrement des fichiers
 
@@ -134,6 +157,16 @@ comptes anciens restent compatibles et activent leur identité à leur convenanc
 Un destinataire doit l'activer avant de recevoir. Une future rotation devra
 versionner les clés et conserver ou réenvelopper les anciens partages ; écraser
 une clé privée aujourd'hui rendrait ces partages irrécupérables.
+
+Un compte inscrit n'a pas automatiquement une clé de partage. Si la recherche
+du destinataire échoue, celui-ci doit se connecter à **son propre compte**,
+ouvrir **Fichiers** et choisir **Activer la réception sécurisée**. L'émetteur
+ne peut pas initialiser la clé privée d'autrui : cela obligerait le serveur ou
+l'émetteur à connaître une clé privée qui ne leur appartient pas. Le message de
+recherche reste identique pour une adresse inconnue, un compte désactivé et
+une identité de partage non initialisée.
+La recherche de son propre courriel est arrêtée dans le navigateur avec un message
+distinct : le fichier est déjà accessible dans « Mes fichiers ».
 
 ## 6. Transfert sécurisé entre Alice et Bob
 
@@ -217,12 +250,13 @@ et de hachage existantes restent intactes lors de la migration.
 ## 9. Migration et activation sur Render
 
 **Avant le premier déploiement :** sauvegarder PostgreSQL et les variables
-Render. Le démarrage applique `001_files_dashboards` : ajout de quatre colonnes
-sur `user`, création des quatre tables et de `schema_revision`. Les anciens
+Render. Le démarrage applique `001_files_dashboards` puis `002_admin_controls` :
+ajout des colonnes d'administration et de `suspended_until` sur `user`, création
+des quatre tables et de `schema_revision`. Les anciens
 comptes ont `is_admin=false`, `is_active=true`, `session_version=0`. Les tables
 existantes du coffre ne sont pas renommées. La migration est additive,
 transactionnelle sur PostgreSQL et protégée par un verrou de migration. Un second
-démarrage ne réapplique pas la révision. Il n'y a pas de migration descendante
+démarrage ne réapplique pas ces révisions. Il n'y a pas de migration descendante
 automatique : ne pas supprimer des données chiffrées pour revenir en arrière.
 
 1. Déployer la branche après relecture et sauvegarde (build/start inchangés).
@@ -269,7 +303,8 @@ npm run lint
 ```
 
 Les tests API vérifient les anciens blobs après migration, les accès d'un tiers
-et d'un admin, la révocation/suppression, l'identité publique immuable, les sessions
+et d'un admin, la recherche, la promotion, la suspension à durée définie,
+la suppression complète d’un compte, la révocation, l'identité publique immuable, les sessions
 après désactivation/réactivation, la suspension des fichiers du propriétaire,
 le verrouillage TOTP, les quotas/tailles, le contrôle CSRF et le coffre existant.
 Les tests JavaScript exécutent les vrais algorithmes WebCrypto et Argon2id pour
@@ -308,6 +343,12 @@ Démonstration conseillée avec des fichiers fictifs :
    limite concernant sa copie précédente.
 7. L'admin voit les compteurs mais ne peut pas télécharger le fichier d'Alice.
 8. L'admin désactive puis réactive Alice : son ancienne session reste invalide.
+9. L'admin recherche Bob, vérifie que le MFA est activé, puis le promeut ; Bob se
+   reconnecte et voit son onglet Administration.
+10. L'admin suspend temporairement un compte de test et vérifie qu'il redevient
+    accessible après échéance avec une nouvelle connexion.
+11. L'admin supprime un compte de test en saisissant son adresse : ses fichiers
+    et partages disparaissent. Ne pas utiliser de vraies données pour cette démo.
 
 ## 11. Réponses courtes aux questions du professeur
 

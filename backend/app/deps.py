@@ -5,6 +5,7 @@ from sqlmodel import Session
 # Dépendance fournissant une session BDD active pour chaque requête
 from app.database import get_session
 from app.models import User
+from app.account_state import account_available
 # Fonction de vérification et décodage du jeton JWT pour extraire le user_id
 from app.security import decode_access_token, token_version
 
@@ -39,7 +40,7 @@ def current_user(
 
     # Vérification que l'utilisateur existe toujours dans la BDD
     user = session.get(User, user_id)
-    if user is None or not user.is_active or user.session_version != token_version(access_token):
+    if user is None or not account_available(user) or user.session_version != token_version(access_token):
         raise _unauthorized
 
     return user

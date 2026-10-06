@@ -10,6 +10,7 @@ from app.config import settings
 from app.database import get_session
 from app.deps import current_user
 from app.audit import record
+from app.account_state import available_in_sql
 from app.models import EncryptedFile, FileShare, SharingKey, User
 from app.schemas import FileIn, RecipientIn, ShareIn, SharingKeyIn
 from app.routers.auth import limiter
@@ -31,7 +32,7 @@ def accessible(file_id, user, session):
     shared = exists().where(FileShare.file_id == EncryptedFile.id,
                             FileShare.recipient_id == user.id)
     item = session.exec(select(EncryptedFile).join(User, User.id == EncryptedFile.user_id).where(
-        EncryptedFile.id == file_id, User.is_active == True,
+        EncryptedFile.id == file_id, available_in_sql(),
         or_(EncryptedFile.user_id == user.id, shared))).first()
     if item is None:
         raise NOT_FOUND
@@ -78,7 +79,7 @@ def recipient(request: Request, data: RecipientIn, user: User = Depends(current_
               session: Session = Depends(get_session)):
     # No global directory. Exact authenticated lookup only; availability is disclosed.
     row = session.exec(select(User, SharingKey).join(SharingKey, SharingKey.user_id == User.id).where(
-        User.email == data.email, User.is_active == True, User.id != user.id)).first()
+        User.email == data.email, available_in_sql(), User.id != user.id)).first()
     if row is None:
         raise HTTPException(404, "Destinataire indisponible ou partage non initialisé")
     person, key = row
@@ -94,7 +95,7 @@ def list_files(user: User = Depends(current_user), session: Session = Depends(ge
                                    EncryptedFile.size_bytes, EncryptedFile.created_at, FileShare.wrapped_key, User.email)
                             .join(FileShare, FileShare.file_id == EncryptedFile.id)
                             .join(User, User.id == EncryptedFile.user_id)
-                            .where(FileShare.recipient_id == user.id, User.is_active == True)
+                            .where(FileShare.recipient_id == user.id, available_in_sql())
                             .order_by(FileShare.created_at.desc())).all()
     return {"owned": [dict(r._mapping) for r in mine],
             "received": [dict(r._mapping) for r in received],
@@ -153,7 +154,7 @@ def share(request: Request, file_id: str, data: ShareIn, user: User = Depends(cu
           session: Session = Depends(get_session)):
     owned(file_id, user, session)
     recipient = session.exec(select(User).where(User.id == data.recipient_id,
-                                              User.is_active == True, User.id != user.id)).first()
+                                              available_in_sql(), User.id != user.id)).first()
     key = session.get(SharingKey, data.recipient_id)
     if not recipient or not key:
         raise HTTPException(404, "Destinataire indisponible")

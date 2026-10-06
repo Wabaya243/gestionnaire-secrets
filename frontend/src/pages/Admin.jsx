@@ -6,6 +6,8 @@ import {
   fetchAdminActivity,
   setAccountState,
   unlockAccount,
+  promoteAccount,
+  deleteAccount,
 } from "../lib/api";
 import { Stat, Activity, ErrorNotice } from "../components/DashboardUI";
 import { bytesLabel, dateLabel, buttonClass, panelClass } from "../lib/display";
@@ -16,19 +18,23 @@ export default function Admin({ navigate }) {
   const [accounts, setAccounts] = useState({ items: [], total: 0 });
   const [events, setEvents] = useState([]);
   const [offset, setOffset] = useState(0);
+  const [query, setQuery] = useState("");
+  const [draft, setDraft] = useState("");
+  const [duration, setDuration] = useState(1440);
+  const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState(null);
   const load = useCallback(async () => {
     const [o, u, a] = await Promise.all([
       fetchAdminOverview(),
-      fetchAdminUsers(offset),
+      fetchAdminUsers(offset, query),
       fetchAdminActivity(),
     ]);
     setOverview(o);
     setAccounts(u);
     setEvents(a);
-  }, [offset]);
+  }, [offset, query]);
   useEffect(() => {
     if (profile.mfa_enabled)
       Promise.resolve()
@@ -40,7 +46,10 @@ export default function Admin({ navigate }) {
     setError("");
     try {
       if (pending.action === "unlock") await unlockAccount(pending.user.id);
-      else await setAccountState(pending.user.id, !pending.user.is_active);
+      else if (pending.action === "promote") await promoteAccount(pending.user.id);
+      else if (pending.action === "delete") await deleteAccount(pending.user.id);
+      else if (pending.action === "temporary") await setAccountState(pending.user.id, false, Number(duration));
+      else await setAccountState(pending.user.id, !pending.user.is_available);
       setPending(null);
       await load();
     } catch (e) {
@@ -48,6 +57,12 @@ export default function Admin({ navigate }) {
     } finally {
       setBusy(false);
     }
+  }
+  function ask(user, action) {
+    setError("");
+    setConfirmation("");
+    setDuration(1440);
+    setPending({ user, action });
   }
   if (!profile.mfa_enabled)
     return (
@@ -96,21 +111,33 @@ export default function Admin({ navigate }) {
           className="rounded-xl border border-amber-800 bg-amber-950/40 p-4"
         >
           <p className="text-sm">
-            {pending.action === "unlock"
-              ? "Débloquer"
-              : pending.user.is_active
-                ? "Désactiver"
-                : "Réactiver"}{" "}
+            {{ unlock: "Débloquer", promote: "Promouvoir administrateur", delete: "Supprimer définitivement", temporary: "Suspendre temporairement", state: pending.user.is_available ? "Désactiver jusqu’à réactivation" : "Réactiver" }[pending.action]}{" "}
             le compte <strong>{pending.user.email}</strong> ?
           </p>
-          {pending.action !== "unlock" && (
+          {pending.action === "temporary" && (
+            <label className="mt-3 block text-sm text-zinc-300">
+              Durée de suspension
+              <select className="ml-3 rounded-md border border-zinc-700 bg-zinc-950 p-2" value={duration} onChange={(e) => setDuration(e.target.value)}>
+                <option value={60}>1 heure</option>
+                <option value={1440}>24 heures</option>
+                <option value={10080}>7 jours</option>
+              </select>
+            </label>
+          )}
+          {(pending.action === "temporary" || pending.action === "state" || pending.action === "promote") && (
             <p className="mt-2 text-xs text-amber-200">
-              Les sessions existantes seront invalidées. La désactivation
-              suspend aussi les partages de ce compte.
+              Les sessions existantes seront invalidées. Une suspension empêche aussi
+              les téléchargements des fichiers partagés par ce compte.
             </p>
           )}
+          {pending.action === "delete" && (
+            <div className="mt-3 text-sm text-red-300">
+              <p>Cette suppression est irréversible : secrets, fichiers chiffrés et partages seront effacés. Saisissez l’adresse complète pour confirmer.</p>
+              <input className="mt-2 w-full rounded-md border border-red-800 bg-zinc-950 p-2" aria-label="Confirmer l’adresse à supprimer" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} autoComplete="off" />
+            </div>
+          )}
           <div className="mt-4 flex gap-2">
-            <button className={buttonClass} disabled={busy} onClick={apply}>
+            <button className={buttonClass} disabled={busy || (pending.action === "delete" && confirmation !== pending.user.email)} onClick={apply}>
               Confirmer
             </button>
             <button
@@ -125,6 +152,11 @@ export default function Admin({ navigate }) {
       )}
       <section className={panelClass}>
         <h2 className="mb-4 font-medium">Utilisateurs ({accounts.total})</h2>
+        <form className="mb-4 flex gap-2" onSubmit={(e) => { e.preventDefault(); setOffset(0); setQuery(draft.trim()); }}>
+          <input className="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 p-2 text-sm" aria-label="Rechercher un compte par adresse e-mail" placeholder="Rechercher un compte par e-mail" value={draft} maxLength={254} onChange={(e) => setDraft(e.target.value)} />
+          <button className={buttonClass} type="submit">Rechercher</button>
+          {query && <button className={buttonClass} type="button" onClick={() => { setDraft(""); setQuery(""); setOffset(0); }}>Effacer</button>}
+        </form>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="text-xs text-zinc-400">
@@ -154,8 +186,8 @@ export default function Admin({ navigate }) {
                     </p>
                   </td>
                   <td className="p-3">
-                    {!u.is_active
-                      ? "Désactivé"
+                    {!u.is_available
+                      ? u.suspended_until && u.is_active ? `Suspendu jusqu’au ${dateLabel(u.suspended_until)}` : "Désactivé jusqu’à réactivation"
                       : u.is_locked
                         ? "Verrouillé"
                         : "Actif"}
@@ -178,29 +210,33 @@ export default function Admin({ navigate }) {
                     <p>{dateLabel(u.last_login_at)}</p>
                   </td>
                   <td className="p-3">
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <button
                         className={buttonClass}
                         disabled={busy || u.is_admin}
-                        onClick={() => setPending({ user: u, action: "state" })}
+                        onClick={() => ask(u, "state")}
                       >
-                        {u.is_active ? "Désactiver" : "Réactiver"}
+                        {u.is_available ? "Désactiver" : "Réactiver"}
                       </button>
+                      {u.is_available && !u.is_admin && <button className={buttonClass} disabled={busy} onClick={() => ask(u, "temporary")}>Suspendre</button>}
                       <button
                         className={buttonClass}
                         disabled={busy || (!u.is_locked && !u.failed_attempts)}
                         onClick={() =>
-                          setPending({ user: u, action: "unlock" })
+                          ask(u, "unlock")
                         }
                       >
                         Débloquer
                       </button>
+                      {!u.is_admin && <button className={buttonClass} disabled={busy || !u.is_available || !u.mfa_enabled} title={!u.mfa_enabled ? "Le compte doit d’abord activer le MFA" : ""} onClick={() => ask(u, "promote")}>Promouvoir admin</button>}
+                      {!u.is_admin && <button className={buttonClass} disabled={busy} onClick={() => ask(u, "delete")}>Supprimer</button>}
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {accounts.items.length === 0 && <p className="p-4 text-sm text-zinc-400">Aucun compte trouvé.</p>}
         </div>
         <div className="mt-4 flex justify-between">
           <button

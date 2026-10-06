@@ -78,12 +78,17 @@ export const mfaSetup = () => request('/auth/mfa/setup', { method: 'POST' });
 export const mfaActivate = (totpCode) =>
   request('/auth/mfa/activate', { method: 'POST', body: { totp_code: totpCode } });
 
+export const mfaDisable = (totpCode) =>
+  request('/auth/mfa/disable', { method: 'POST', body: { totp_code: totpCode } });
+
 export const fetchDashboard = () => request('/dashboard');
 export const fetchAdminOverview = () => request('/admin/overview');
-export const fetchAdminUsers = (offset = 0) => request(`/admin/users?offset=${offset}&limit=50`);
+export const fetchAdminUsers = (offset = 0, q = '') => request(`/admin/users?offset=${offset}&limit=50&q=${encodeURIComponent(q)}`);
 export const fetchAdminActivity = () => request('/admin/activity');
-export const setAccountState = (id, isActive) => request(`/admin/users/${id}/state`, { method: 'PATCH', body: { is_active: isActive } });
+export const setAccountState = (id, isActive, suspendMinutes = null) => request(`/admin/users/${id}/state`, { method: 'PATCH', body: { is_active: isActive, suspend_minutes: suspendMinutes } });
 export const unlockAccount = id => request(`/admin/users/${id}/unlock`, { method: 'POST' });
+export const promoteAccount = id => request(`/admin/users/${id}/promote`, { method: 'POST' });
+export const deleteAccount = id => request(`/admin/users/${id}`, { method: 'DELETE' });
 export const fetchSharingKeys = () => request('/files/keys/me');
 export const saveSharingKeys = body => request('/files/keys/me', { method: 'POST', body });
 export const findRecipient = email => request('/files/recipient', { method: 'POST', body: { email } });

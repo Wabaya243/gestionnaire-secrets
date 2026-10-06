@@ -197,7 +197,20 @@ export default function Files() {
     setRecipient(null);
     setExpectedFingerprint("");
     run(async () => {
-      const found = await findRecipient(email.trim());
+      if (email.trim().toLowerCase() === profile.email.toLowerCase()) {
+        throw new Error("Vous ne pouvez pas partager un fichier avec votre propre compte : il est déjà dans Mes fichiers.");
+      }
+      let found;
+      try {
+        found = await findRecipient(email.trim());
+      } catch (e) {
+        if (e.status === 404) {
+          throw new Error(
+            "Destinataire indisponible. Vérifiez l’adresse et demandez-lui d’ouvrir son propre compte, puis Fichiers → Activer la réception sécurisée.",
+          );
+        }
+        throw e;
+      }
       setRecipient({
         ...found,
         fingerprint: await fingerprint(found.public_key),
@@ -426,6 +439,11 @@ export default function Files() {
               Rechercher
             </button>
           </form>
+          <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+            Le destinataire doit activer la réception sécurisée dans son propre
+            compte avant le partage. Le bouton en haut de cette page active
+            seulement votre réception. Pour tester, choisissez l’adresse d’un autre compte.
+          </p>
           {recipient && (
             <div className="mt-4 space-y-3 rounded-xl border border-amber-900 bg-amber-950/20 p-4">
               <p className="text-sm">Destinataire : {recipient.email}</p>
