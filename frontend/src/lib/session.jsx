@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import { fetchMe } from './api';
+import { createContext, useCallback, useContext, useMemo, useState, useEffect, useRef } from 'react';
+import { fetchMe, logoutUser } from './api';
 
 // Le contexte porte la clé de chiffrement pour toute l'application.
 // Rien n'est écrit sur disque : la clé vit dans un état React,
@@ -7,6 +7,7 @@ import { fetchMe } from './api';
 const SessionContext = createContext(null);
 
 export function SessionProvider({ children }) {
+  const generation = useRef(0);
   const [encKey, setEncKey] = useState(null);    // CryptoKey ou null
   const [profile, setProfile] = useState(null);  // { email, mfa_enabled, created_at }
 
@@ -14,11 +15,14 @@ export function SessionProvider({ children }) {
   // de session ne vaut plus rien : on oublie la clé, sinon l'interface
   // resterait déverrouillée alors qu'aucune requête ne passerait plus.
   const refreshProfile = useCallback(async () => {
+    const ticket = generation.current;
     try {
       const me = await fetchMe();
+      if (ticket !== generation.current) return null;
       setProfile(me);
       return me;
     } catch {
+      if (ticket !== generation.current) return null;
       setEncKey(null);
       setProfile(null);
       return null;
@@ -28,17 +32,30 @@ export function SessionProvider({ children }) {
   // La clé est dérivée par l'appelant ; l'email, lui, vient du serveur.
   const unlock = useCallback(
     async (key) => {
-      setEncKey(key);
-      return refreshProfile();
+      const me = await refreshProfile();
+      if (me) setEncKey(key);
+      return me;
     },
     [refreshProfile],
   );
 
   const lock = useCallback(() => {
     // Verrouiller = oublier la clé. Rien d'autre à effacer.
+    generation.current += 1;
     setEncKey(null);
     setProfile(null);
+    logoutUser().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    window.addEventListener('vault-session-expired', lock);
+    return () => window.removeEventListener('vault-session-expired', lock);
+  }, [lock]);
+  useEffect(() => {
+    if (!encKey) return;
+    const timer = setInterval(refreshProfile, 60000);
+    return () => clearInterval(timer);
+  }, [encKey, refreshProfile]);
 
   const value = useMemo(
     () => ({

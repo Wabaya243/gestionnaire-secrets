@@ -74,10 +74,10 @@ base ne permet pas de rejouer le hash volé pour s'authentifier.
 
 ### Modèle de données
 
-`users` — email, kdf_salt (public), auth_hash, totp_secret, mfa_enabled,
+`user` — email, kdf_salt (public), auth_hash, totp_secret, mfa_enabled,
 failed_attempts, locked_until
 
-`vault_items` — user_id, label_enc, payload_enc
+`vaultitem` — user_id, label_enc, payload_enc
 (le libellé est chiffré lui aussi)
 
 ### Défenses spécifiques
@@ -205,7 +205,8 @@ le correcteur puisse se connecter sans application TOTP.
 - Secret TOTP stocké en clair côté serveur (nécessaire à la vérification)
 - XSS dans l'application donnerait accès à la clé en mémoire
 - Serveur malveillant pourrait servir un JavaScript modifié
-- Absence de migrations (`create_all` uniquement)
+- Rotation des identités de partage et signature asymétrique des expéditeurs non implémentées
+- Métadonnées (comptes, tailles, dates et relations de partage) visibles du serveur
 - Base PostgreSQL gratuite expire 30 jours après création
 
 ---
@@ -215,3 +216,46 @@ le correcteur puisse se connecter sans application TOTP.
 `FastAPI`, `SQLModel`, `argon2-cffi`, `PyJWT`, `pyotp`, `slowapi`,
 `psycopg`, `React`, `Vite`, `hash-wasm`, `zxcvbn`, `qrcode.react`,
 `lucide-react`, `tailwindcss`
+
+
+## Extension : tableaux de bord et fichiers chiffrés
+
+- **Tableau de bord utilisateur** : compteurs, stockage, état MFA et activité récente.
+- **Administration** : vue globale, liste paginée des comptes, désactivation/réactivation
+  avec invalidation des sessions, déblocage et journal des actions ; MFA obligatoire.
+- **Fichiers** : AES-256-GCM dans le navigateur, noms et métadonnées également chiffrés,
+  une clé par fichier, blobs stockés en base (10 Mio/fichier, 100 Mio/compte par défaut).
+- **Partage** : enveloppe RSA-3072-OAEP/SHA-256 de la clé du fichier pour le destinataire,
+  clé privée protégée par la clé du coffre, comparaison d'empreinte par un canal indépendant,
+  révocation des téléchargements futurs.
+- **MFA** : activation et désactivation depuis le tableau de bord ; la désactivation
+  demande un code TOTP valide et efface l'ancien secret TOTP.
+- **Administration** : recherche par adresse, promotion avec MFA, suspension pour 1 heure,
+  24 heures ou 7 jours, désactivation jusqu’à réactivation, suppression définitive des
+  comptes ordinaires avec leurs données chiffrées. Une nouvelle connexion est exigée
+  après promotion ou suspension. Les admins ne peuvent pas être supprimés via l’interface.
+- **Migration** : révisions additives `001_files_dashboards` et `002_admin_controls` appliquées au démarrage,
+  sans modification des secrets chiffrés existants. Sauvegarder la base avant déploiement.
+
+L'admin ne peut jamais lire les secrets ou fichiers d'autres comptes par son rôle.
+Le partage de fichiers est un accès accordé au destinataire ; il conserve les données
+chez l'expéditeur. Révoquer ne supprime pas les copies déjà téléchargées.
+Un compte déjà inscrit doit d'abord ouvrir **Fichiers → Activer la réception sécurisée**
+dans son propre navigateur avant de pouvoir recevoir. Le bouton du compte expéditeur
+ne crée que la clé de réception de l'expéditeur.
+On ne peut pas partager un fichier avec sa propre adresse : il figure déjà dans
+« Mes fichiers ». Pour tester, envoyer depuis un compte vers un second compte.
+
+Le compte administrateur doit être créé depuis le navigateur et avoir activé son MFA.
+Depuis le dossier `backend`, dans la console serveur :
+
+```bash
+python -m app.manage grant-admin ton-adresse@example.cd
+```
+
+Puis se reconnecter. Il n'existe pas de compte admin par défaut.
+Un administrateur déjà connecté peut ensuite promouvoir d’autres comptes actifs ayant
+activé le MFA depuis son tableau de bord ; ces comptes doivent se reconnecter.
+
+La conception, les limites, les commandes de vérification et les réponses pour
+la défense orale sont détaillées dans [docs/EXTENSIONS_ZERO_KNOWLEDGE.md](docs/EXTENSIONS_ZERO_KNOWLEDGE.md).

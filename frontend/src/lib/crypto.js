@@ -96,15 +96,11 @@ export async function deriveEncryptionKey(password, saltB64) {
   const raw = await derive(password, saltB64, 'enc');
 
   // importKey transforme les octets en objet CryptoKey.
-  // extractable = false : le JavaScript ne pourra plus jamais relire
-  // les octets de la clé, même via console.log. Protection contre le XSS.
-  return await crypto.subtle.importKey(
-    'raw',
-    raw,
-    { name: 'AES-GCM' },
-    false,                     // <-- non extractible
-    ['encrypt', 'decrypt'],
-  );
+  // extractable = false interdit l’export des octets de la clé.
+  // Un XSS peut toutefois appeler decrypt : la CSP reste indispensable.
+  try {
+    return await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  } finally { raw.fill(0); }
 }
 
 //  Chiffrement / déchiffrement 

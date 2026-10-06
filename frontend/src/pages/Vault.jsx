@@ -13,7 +13,7 @@ const EMPTY = { username: '', password: '', url: '', notes: '' };
 const BTN_GHOST =
   'inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 transition-colors duration-150 hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-600';
 
-export default function Vault() {
+export default function Vault({ embedded = false }) {
   const { encKey, email, lock } = useSession();
 
   const [items, setItems] = useState([]);      // items déchiffrés
@@ -69,14 +69,14 @@ export default function Vault() {
       );
 
       setItems(clear);
-    } catch (e) {
+    } catch {
       setError('Impossible de déchiffrer le coffre');
     } finally {
       setLoading(false);
     }
   }, [encKey]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { Promise.resolve().then(load); }, [load]);
 
   // Ajout
 
@@ -138,7 +138,7 @@ export default function Vault() {
 
       cancelEdit();
       await load();           // on relit depuis le serveur : source de vérité
-    } catch (e) {
+    } catch {
       setError('Modification impossible');
     }
   }
@@ -153,14 +153,16 @@ export default function Vault() {
 
   // Suppression
   async function handleDelete(id) {
-    await deleteItem(id);
-    await load();
+    try {
+      await deleteItem(id);
+      await load();
+    } catch (e) { setError(e.message); }
   }
 
   // Rendu
 
   return (
-    <div className="relative min-h-screen">
+    <div className={embedded ? "relative" : "relative min-h-screen"}>
       {/* Fond ambiant fixé au viewport : il habille toute la page et
           reste en place pendant le défilement, au lieu de s'arrêter
           sous l'en-tête. -z-10 le maintient derrière le contenu. */}
@@ -171,7 +173,7 @@ export default function Vault() {
 
       {/* En-tête collant : sur une longue liste, verrouiller le coffre
           doit rester atteignable sans remonter en haut de page. */}
-      <header className="sticky top-0 z-20 border-b border-zinc-800/70 bg-zinc-950/60 backdrop-blur-md">
+      {!embedded && <header className="sticky top-0 z-20 border-b border-zinc-800/70 bg-zinc-950/60 backdrop-blur-md">
         <div className="mx-auto flex max-w-xl items-center justify-between gap-4 px-4 py-3.5">
           <Logo />
           <div className="flex min-w-0 items-center gap-3">
@@ -182,9 +184,9 @@ export default function Vault() {
             </button>
           </div>
         </div>
-      </header>
+      </header>}
 
-      <div className="relative mx-auto max-w-xl px-4 py-10">
+      <div className={embedded ? "relative mx-auto max-w-2xl" : "relative mx-auto max-w-xl px-4 py-10"}>
         <div className="space-y-8">
           <MfaSetup />
 

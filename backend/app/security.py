@@ -95,7 +95,7 @@ def needs_rehash(stored: str) -> bool:
 # --- JETONS D'ACCÈS (JSON WEB TOKENS)
 # ==========================================
 
-def create_access_token(user_id: int) -> str:
+def create_access_token(user_id: int, session_version: int = 0) -> str:
     """
     Génère un jeton JWT contenant l'ID de l'utilisateur.
     Le jeton a une durée de vie limitée définie dans la configuration.
@@ -103,6 +103,7 @@ def create_access_token(user_id: int) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id), # "sub" (subject) : l'identité concernée par ce jeton
+        "ver": session_version,
         "iat": now,          # "iat" (issued at) : date de création
         "exp": now + timedelta(minutes=settings.JWT_EXPIRE_MINUTES), # "exp" : date d'expiration
     }
@@ -122,7 +123,7 @@ def decode_access_token(token: str) -> Optional[int]:
             algorithms=[JWT_ALGORITHM], # Sécurité critique : bloque la faille de l'algorithme "none"
         )
         return int(payload["sub"])
-    except (jwt.PyJWTError, KeyError, ValueError):
+    except (jwt.PyJWTError, KeyError, ValueError, TypeError):
         # PyJWTError attrape les jetons expirés ou dont la signature est invalide
         return None
 
@@ -189,3 +190,10 @@ def lockout_deadline() -> datetime:
     en ajoutant le délai configuré à l'heure actuelle (en UTC).
     """
     return datetime.now(timezone.utc) + timedelta(minutes=settings.LOCKOUT_MINUTES)
+
+def token_version(token: str) -> int | None:
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return int(payload.get("ver", 0))  # existing sessions before migration
+    except (jwt.PyJWTError, ValueError, TypeError):
+        return None

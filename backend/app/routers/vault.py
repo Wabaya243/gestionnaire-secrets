@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.database import get_session
+from app.audit import record
 from app.deps import current_user
 from app.models import User, VaultItem
 from app.schemas import VaultItemIn, VaultItemOut
@@ -63,6 +64,8 @@ def create_item(
         payload_enc=data.payload_enc,
     )
     session.add(item)
+    session.flush()
+    record(session, user.id, "secret.created", item.id)
     session.commit()
     session.refresh(item)                      # récupère l'id généré
     return item
@@ -83,6 +86,7 @@ def update_item(
     item.updated_at = datetime.now(timezone.utc)
 
     session.add(item)
+    record(session, user.id, "secret.updated", item.id)
     session.commit()
     session.refresh(item)
     return item
@@ -96,5 +100,6 @@ def delete_item(
 ):
     """Supprime un blob. 204 = succès sans contenu de réponse."""
     item = _owned_item(item_id, user, session)
+    record(session, user.id, "secret.deleted", item.id)
     session.delete(item)
     session.commit()

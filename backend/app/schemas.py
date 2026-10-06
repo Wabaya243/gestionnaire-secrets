@@ -91,6 +91,8 @@ class MfaActivateIn(BaseModel):
 
 class MeOut(BaseModel):
     """Informations du compte connecté : aucune donnée sensible n'est exposée."""
+    id: int
+    is_admin: bool
     email: EmailStr
     mfa_enabled: bool
     created_at: datetime
@@ -115,3 +117,76 @@ class VaultItemOut(BaseModel):
     payload_enc: str
     created_at: datetime
     updated_at: datetime
+
+# New endpoints reject extra fields (role/owner injection) and validate decoded sizes.
+import base64
+from uuid import UUID
+from pydantic import ConfigDict
+
+
+class StrictIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+def checked_blob(value, minimum, maximum):
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (ValueError, TypeError):
+        raise ValueError("base64 invalide")
+    if not minimum <= len(raw) <= maximum:
+        raise ValueError("taille du blob invalide")
+    return value
+
+
+class SharingKeyIn(StrictIn):
+    public_key: str = Field(max_length=1024)
+    private_key_enc: str = Field(max_length=8192)
+
+    @field_validator("public_key")
+    @classmethod
+    def public_format(cls, v):
+        # RSA SPKI structural/key size checks happen in the route.
+        return checked_blob(v, 300, 800)
+
+    @field_validator("private_key_enc")
+    @classmethod
+    def private_format(cls, v):
+        return checked_blob(v, 28, 6144)
+
+
+class FileIn(StrictIn):
+    id: UUID
+    metadata_enc: str = Field(max_length=4096)
+    owner_key_enc: str = Field(max_length=1024)
+    ciphertext: str = Field(max_length=14 * 1024 * 1024)
+
+    @field_validator("metadata_enc", "owner_key_enc")
+    @classmethod
+    def envelope(cls, v):
+        return checked_blob(v, 28, 3072)
+
+    @field_validator("ciphertext")
+    @classmethod
+    def encrypted_content(cls, v):
+        from app.config import settings
+        return checked_blob(v, 28, settings.MAX_FILE_BYTES + 28)
+
+
+class ShareIn(StrictIn):
+    recipient_id: int = Field(gt=0)
+    recipient_public_key: str = Field(max_length=1024)
+    wrapped_key: str = Field(max_length=512)
+
+    @field_validator("wrapped_key")
+    @classmethod
+    def key_size(cls, v):
+        return checked_blob(v, 384, 384)  # RSA-3072 ciphertext
+
+
+class RecipientIn(StrictIn):
+    email: EmailStr
+
+
+class AccountStateIn(StrictIn):
+    is_active: bool
+    suspend_minutes: Optional[int] = Field(default=None, ge=1, le=525600)

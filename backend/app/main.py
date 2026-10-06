@@ -10,7 +10,8 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.routers import auth, vault
+from app.routers import auth, vault, files, dashboard
+from app.request_guard import RequestGuard
 from app.routers.auth import limiter
 
 
@@ -38,6 +39,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(RequestGuard)
 
 #  En-têtes de sécurité 
 
@@ -50,6 +52,8 @@ async def security_headers(request, call_next):
     response = await call_next(request)
 
     # Empêche l'inclusion du site dans une iframe (clickjacking)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
     response.headers["X-Frame-Options"] = "DENY"
     # Empêche le navigateur de deviner le type MIME
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -71,6 +75,8 @@ async def security_headers(request, call_next):
 
 app.include_router(auth.router)
 app.include_router(vault.router)
+app.include_router(files.router)
+app.include_router(dashboard.router)
 
 
 
