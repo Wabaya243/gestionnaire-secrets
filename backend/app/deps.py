@@ -6,7 +6,7 @@ from sqlmodel import Session
 from app.database import get_session
 from app.models import User
 # Fonction de vérification et décodage du jeton JWT pour extraire le user_id
-from app.security import decode_access_token
+from app.security import decode_access_token, token_version
 
 # Nom du cookie HTTP contenant le JWT de session
 COOKIE_NAME = "access_token"
@@ -39,10 +39,18 @@ def current_user(
 
     # Vérification que l'utilisateur existe toujours dans la BDD
     user = session.get(User, user_id)
-    if user is None:
+    if user is None or not user.is_active or user.session_version != token_version(access_token):
         raise _unauthorized
 
     return user
 
 ### Le message d'erreur est volontairement vague : ni « jeton expiré », ni « utilisateur supprimé ». 
 # Un attaquant ne doit rien déduire.
+
+
+def admin_user(user: User = Depends(current_user)) -> User:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Accès administrateur requis")
+    if not user.mfa_enabled:
+        raise HTTPException(status_code=403, detail="Activez la double authentification avant d’administrer")
+    return user

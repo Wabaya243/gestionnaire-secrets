@@ -10,7 +10,8 @@ engine = create_engine(settings.db_url, connect_args=connect_args)
 
 def init_db() -> None:
     """Crée toutes les tables dans la base de données en fonction de tes modèles."""
-    SQLModel.metadata.create_all(engine)
+    from app.migrations import migrate
+    migrate(engine)
 
 
 def get_session():

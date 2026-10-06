@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     ARGON2_MEMORY_COST: int = 65536   # 64 Mio
     ARGON2_PARALLELISM: int = 4
 
+    MAX_FILE_BYTES: int = 10 * 1024 * 1024
+    FILE_QUOTA_BYTES: int = 100 * 1024 * 1024
+
     # Verrouillage
     MAX_FAILED_ATTEMPTS: int = 5
     LOCKOUT_MINUTES: int = 15

@@ -7,7 +7,8 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import get_session
 from app.deps import COOKIE_NAME, current_user
-from app.models import User
+from app.models import User, utcnow
+from app.audit import record
 from app.schemas import (
     LoginIn, LoginOut, MeOut, MfaActivateIn, MfaSetupOut,
     RegisterIn, SaltIn, SaltOut,
@@ -101,11 +102,15 @@ def login(
     data: LoginIn,
     session: Session = Depends(get_session),
 ):
-    user = session.exec(select(User).where(User.email == data.email)).first()
+    user = session.exec(select(User).where(User.email == data.email).with_for_update()).first()
 
     # Si l'utilisateur n'existe pas, on simule un hachage pour éviter une timing attack
     if user is None:
         hash_auth(data.auth_hash)
+        raise BAD_CREDENTIALS
+
+    if not user.is_active:
+        verify_auth(user.auth_hash, data.auth_hash)
         raise BAD_CREDENTIALS
 
     # Vérification du verrouillage temporel du compte
@@ -119,6 +124,7 @@ def login(
         if user.failed_attempts >= settings.MAX_FAILED_ATTEMPTS:
             user.locked_until = lockout_deadline()
             user.failed_attempts = 0
+        record(session, user.id, "login.failed")
         session.add(user)
         session.commit()
         raise BAD_CREDENTIALS
@@ -132,9 +138,16 @@ def login(
         # Étape 2 MFA : vérification du code à 6 chiffres
         if not verify_totp(user.totp_secret, data.totp_code):
             user.failed_attempts += 1
+            if user.failed_attempts >= settings.MAX_FAILED_ATTEMPTS:
+                user.locked_until = lockout_deadline()
+                user.failed_attempts = 0
+            record(session, user.id, "login.failed")
             session.add(user)
             session.commit()
             raise BAD_CREDENTIALS
+
+    record(session, user.id, "login.success")
+    user.last_login_at = utcnow()
 
     # Réinitialisation des compteurs d'échecs après un succès complet
     user.failed_attempts = 0
@@ -143,7 +156,7 @@ def login(
     session.commit()
 
     # Génération du JWT et transmission au client via cookie HttpOnly
-    _set_cookie(response, create_access_token(user.id))
+    _set_cookie(response, create_access_token(user.id, user.session_version))
     return LoginOut(mfa_required=False)
 
 
@@ -162,6 +175,8 @@ def logout(response: Response):
 def me(user: User = Depends(current_user)):
     """Renvoie les informations du compte connecté (ni sel, ni hash, ni secret TOTP)."""
     return MeOut(
+        id=user.id,
+        is_admin=user.is_admin,
         email=user.email,
         mfa_enabled=user.mfa_enabled,
         created_at=user.created_at,
@@ -207,6 +222,7 @@ def mfa_activate(
     if not verify_totp(user.totp_secret, data.totp_code):
         raise HTTPException(status_code=400, detail="Code invalide")
 
+    record(session, user.id, "mfa.enabled")
     user.mfa_enabled = True
     session.add(user)
     session.commit()
@@ -228,6 +244,7 @@ def mfa_disable(
     if not verify_totp(user.totp_secret, data.totp_code):
         raise HTTPException(status_code=400, detail="Code invalide")
 
+    record(session, user.id, "mfa.disabled")
     user.mfa_enabled = False
     user.totp_secret = None          # on efface, pas seulement le drapeau
     session.add(user)
