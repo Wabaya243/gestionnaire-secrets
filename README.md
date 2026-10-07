@@ -192,6 +192,7 @@ Paramètres retenus : `m=64 Mio, t=10, p=1`.
 
 - **Email** : `demo@exemple.cd`
 - **Mot de passe maître** : *Demotest01*
+- vous pouvez creer vos autres comptes pour tester les transfert de fichier et l'enregistrement
 
 Ce compte contient uniquement des données fictives.
 La double authentification **n'est pas activée** sur ce compte afin que
