@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import func, delete, update
 from sqlmodel import Session, select
 from app.database import get_session
-from app.deps import current_user, admin_user
+from app.deps import current_user, admin_user, superadmin_user
 from app.models import User, VaultItem, EncryptedFile, FileShare, SharingKey, AuditEvent, utcnow
 from app.schemas import AccountStateIn
 from app.account_state import account_available, account_available_state, available_in_sql
@@ -63,7 +63,7 @@ def users(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
     search = q.strip()
     pattern = "%" + search.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
     filters = (User.email.ilike(pattern, escape="!"),) if search else ()
-    rows = session.exec(select(User.id, User.email, User.is_active, User.is_admin, User.mfa_enabled,
+    rows = session.exec(select(User.id, User.email, User.is_active, User.is_admin, User.is_superadmin, User.mfa_enabled,
                                User.failed_attempts, User.locked_until, User.suspended_until, User.created_at, User.last_login_at,
                                secret_count.label("secrets"), file_count.label("files"), storage.label("storage_bytes"))
                         .where(*filters).order_by(User.id).offset(offset).limit(limit)).all()
@@ -98,7 +98,7 @@ def state(user_id: int, data: AccountStateIn, user: User = Depends(admin_user),
 
 
 @router.post("/admin/users/{user_id}/promote")
-def promote(user_id: int, user: User = Depends(admin_user), session: Session = Depends(get_session)):
+def promote(user_id: int, user: User = Depends(superadmin_user), session: Session = Depends(get_session)):
     target = session.exec(select(User).where(User.id == user_id).with_for_update()).first()
     if target is None:
         raise HTTPException(404, "Compte introuvable")
@@ -109,6 +109,23 @@ def promote(user_id: int, user: User = Depends(admin_user), session: Session = D
     target.is_admin = True
     target.session_version += 1
     record(session, user.id, "admin.role.granted", target_user_id=target.id)
+    session.add(target)
+    session.commit()
+    return {"status": "ok"}
+
+
+@router.post("/admin/users/{user_id}/demote")
+def demote(user_id: int, user: User = Depends(superadmin_user), session: Session = Depends(get_session)):
+    target = session.exec(select(User).where(User.id == user_id).with_for_update()).first()
+    if target is None:
+        raise HTTPException(404, "Compte introuvable")
+    if target.id == user.id or target.is_superadmin:
+        raise HTTPException(409, "Un superadministrateur ne peut être rétrogradé que depuis la console serveur")
+    if not target.is_admin:
+        raise HTTPException(409, "Ce compte n’est pas administrateur")
+    target.is_admin = False
+    target.session_version += 1
+    record(session, user.id, "admin.role.revoked", target_user_id=target.id)
     session.add(target)
     session.commit()
     return {"status": "ok"}

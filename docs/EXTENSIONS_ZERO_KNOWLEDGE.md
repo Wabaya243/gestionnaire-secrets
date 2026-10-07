@@ -55,12 +55,20 @@ journal applicatif n'est pas une preuve inviolable face à un administrateur de 
 
 ## 3. Administration
 
-Le premier administrateur est attribué depuis la console serveur. Ensuite un admin
-connecté, avec MFA actif, peut promouvoir un compte déjà actif dont le MFA est lui aussi
-actif. La promotion révoque les anciennes sessions du nouveau compte admin. Aucun endpoint
-public ne permet l’auto-promotion. Le garde `admin_user` contrôle le rôle **en base**
-et exige un MFA actif. Masquer un onglet React n'est pas un contrôle
-d'accès : même un appel HTTP direct doit être refusé.
+Le premier **superadmin** est désigné depuis la console serveur, après activation
+du MFA. La migration ajoute `is_superadmin=false` à tous les comptes existants :
+elle ne promeut automatiquement aucun admin actuel. Seul le superadmin connecté
+avec MFA peut promouvoir un compte actif avec MFA en administrateur, ou retirer
+le rôle admin. Chaque changement de rôle invalide les anciennes sessions du
+compte visé. Un admin ordinaire garde la gestion des comptes non admins, sans
+permission de distribuer les rôles. Le garde `admin_user` contrôle le rôle en
+base et exige le MFA ; `superadmin_user` ajoute le contrôle du rôle supérieur.
+Masquer un bouton React n'est pas un contrôle d'accès.
+
+Un superadmin ne peut rétrograder ni son propre compte ni un autre superadmin
+depuis le tableau de bord. La console serveur permet de retirer ce rôle seulement
+s'il en reste au moins un autre. Cela évite de perdre toute administration. La
+promotion et la rétrogradation sont journalisées sans contenu du coffre.
 
 La désactivation incrémente `session_version`. Le JWT inclut la version ; chaque
 requête la compare avec la base. Ainsi, les anciens JWT sont invalides immédiatement,
@@ -86,7 +94,7 @@ son identité privée chiffrée, les accès qu’il a accordés et reçus, ainsi
 événements personnels. Les références au compte dans d’autres événements sont
 effacées ; un événement admin avec l’identifiant du compte supprimé trace l’action.
 Cette opération est irréversible et ne restitue aucun contenu en clair. Un compte
-admin doit d’abord être rétrogradé depuis la console serveur avant suppression.
+admin doit d’abord être rétrogradé par un superadmin avant suppression.
 
 ## 4. Chiffrement des fichiers
 
@@ -250,10 +258,13 @@ et de hachage existantes restent intactes lors de la migration.
 ## 9. Migration et activation sur Render
 
 **Avant le premier déploiement :** sauvegarder PostgreSQL et les variables
-Render. Le démarrage applique `001_files_dashboards` puis `002_admin_controls` :
-ajout des colonnes d'administration et de `suspended_until` sur `user`, création
+Render. Le démarrage applique `001_files_dashboards`, `002_admin_controls` puis
+`003_superadmin_role` : ajout des colonnes d'administration, de `suspended_until`
+et de `is_superadmin` sur `user`, création
 des quatre tables et de `schema_revision`. Les anciens
-comptes ont `is_admin=false`, `is_active=true`, `session_version=0`. Les tables
+comptes ont `is_admin=false`, `is_superadmin=false`, `is_active=true`,
+`session_version=0`. Les admins déjà existants restent admins, sans devenir
+superadmins. Les tables
 existantes du coffre ne sont pas renommées. La migration est additive,
 transactionnelle sur PostgreSQL et protégée par un verrou de migration. Un second
 démarrage ne réapplique pas ces révisions. Il n'y a pas de migration descendante
@@ -264,14 +275,17 @@ automatique : ne pas supprimer des données chiffrées pour revenir en arrière.
 3. Dans le shell Render, depuis `backend` :
 
    ```bash
-   python -m app.manage grant-admin ton-adresse@example.cd
+   python -m app.manage grant-superadmin ton-adresse@example.cd
    ```
 
-4. Se reconnecter : l'onglet Administration apparaît et le MFA est demandé.
-5. Pour retirer ce rôle depuis le shell :
+4. Se reconnecter : l'onglet Administration permet de promouvoir ou rétrograder
+   les administrateurs ordinaires. Les admins existants doivent aussi être
+   explicitement désignés superadmins par cette commande si nécessaire.
+5. Pour retirer le rôle supérieur depuis le shell, après avoir désigné un autre
+   superadmin :
 
    ```bash
-   python -m app.manage revoke-admin ton-adresse@example.cd
+   python -m app.manage revoke-superadmin ton-adresse@example.cd
    ```
 
 Aucun compte admin par défaut, mot de passe de démonstration ou auto-promotion

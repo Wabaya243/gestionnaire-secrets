@@ -7,6 +7,7 @@ from app import models  # register every table
 
 REVISION = "001_files_dashboards"
 ADMIN_REVISION = "002_admin_controls"
+SUPERADMIN_REVISION = "003_superadmin_role"
 
 
 def migrate(engine):
@@ -35,3 +36,8 @@ def migrate(engine):
             if "suspended_until" not in existing:
                 conn.execute(text('ALTER TABLE "user" ADD COLUMN suspended_until TIMESTAMP NULL'))
             conn.execute(text("INSERT INTO schema_revision (revision) VALUES (:r)"), {"r": ADMIN_REVISION})
+        if not conn.execute(text("SELECT revision FROM schema_revision WHERE revision=:r"), {"r": SUPERADMIN_REVISION}).first():
+            existing = {c["name"] for c in inspect(conn).get_columns("user")}
+            if "is_superadmin" not in existing:
+                conn.execute(text('ALTER TABLE "user" ADD COLUMN is_superadmin BOOLEAN NOT NULL DEFAULT FALSE'))
+            conn.execute(text("INSERT INTO schema_revision (revision) VALUES (:r)"), {"r": SUPERADMIN_REVISION})

@@ -34,10 +34,11 @@ Le tableau d'administration présente uniquement des **métadonnées** : adresse
 dates, nombres de secrets et de fichiers, volume chiffré et journal d'activité.
 Un administrateur ayant activé le MFA peut rechercher des comptes, les débloquer,
 les suspendre pour 1 heure, 24 heures ou 7 jours, les désactiver jusqu'à
-réactivation, promouvoir un compte actif avec MFA et supprimer définitivement
-un compte ordinaire. Une promotion ou une suspension invalide les sessions
-existantes. Les comptes administrateurs ne peuvent pas être désactivés ou
-supprimés depuis l'interface.
+réactivation et supprimer définitivement un compte ordinaire. Seul un
+**superadministrateur** peut promouvoir un compte actif avec MFA en administrateur
+ou retirer le rôle admin. Les sessions du compte visé sont invalidées après
+un changement de rôle ou une suspension. Les administrateurs ne peuvent pas
+être désactivés ou supprimés depuis l'interface.
 
 ## Architecture et sécurité
 
@@ -110,18 +111,21 @@ Ouvrir `http://localhost:5173`. La documentation API locale est à
 Le fichier `.env`, la base SQLite, `node_modules` et les builds sont ignorés
 par Git. Sous Linux/macOS, remplacer `Copy-Item` par `cp`.
 
-## Premier administrateur
+## Premier superadministrateur
 
 Créer un compte dans le navigateur et activer son MFA. Dans le dossier `backend`,
 avec le même environnement Python et la même base que le serveur :
 
 ```powershell
-python -m app.manage grant-admin adresse-du-compte@example.cd
+python -m app.manage grant-superadmin adresse-du-compte@example.cd
 ```
 
-Se déconnecter puis se reconnecter. Cet administrateur pourra promouvoir
-d'autres comptes actifs ayant déjà activé leur MFA. Aucun compte admin par
-défaut n'est créé.
+Se déconnecter puis se reconnecter. Ce superadmin pourra promouvoir et
+rétrograder les administrateurs depuis l'interface. Les administrateurs déjà
+présents ne deviennent **pas** superadmins automatiquement lors de la migration :
+attribuer explicitement ce rôle à l'un d'eux avec la même commande. Le dernier
+superadmin ne peut pas perdre ce rôle. Aucun compte privilégié par défaut
+n'est créé.
 
 ## Vérification
 
@@ -155,7 +159,8 @@ cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
 Configurer `DATABASE_URL`, `JWT_SECRET` et `ENVIRONMENT=production` comme
 variables privées du service. Sauvegarder PostgreSQL avant tout déploiement :
-les migrations additives `001_files_dashboards` et `002_admin_controls`
+les migrations additives `001_files_dashboards`, `002_admin_controls` et
+`003_superadmin_role`
 s'exécutent au démarrage. Le volume de fichier est limité par défaut à 10 Mio
 par fichier et 100 Mio par compte.
 

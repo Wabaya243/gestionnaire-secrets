@@ -93,6 +93,7 @@ class MeOut(BaseModel):
     """Informations du compte connecté : aucune donnée sensible n'est exposée."""
     id: int
     is_admin: bool
+    is_superadmin: bool
     email: EmailStr
     mfa_enabled: bool
     created_at: datetime
