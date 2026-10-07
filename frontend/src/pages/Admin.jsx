@@ -7,6 +7,7 @@ import {
   setAccountState,
   unlockAccount,
   promoteAccount,
+  demoteAccount,
   deleteAccount,
 } from "../lib/api";
 import { Stat, Activity, ErrorNotice } from "../components/DashboardUI";
@@ -47,6 +48,7 @@ export default function Admin({ navigate }) {
     try {
       if (pending.action === "unlock") await unlockAccount(pending.user.id);
       else if (pending.action === "promote") await promoteAccount(pending.user.id);
+      else if (pending.action === "demote") await demoteAccount(pending.user.id);
       else if (pending.action === "delete") await deleteAccount(pending.user.id);
       else if (pending.action === "temporary") await setAccountState(pending.user.id, false, Number(duration));
       else await setAccountState(pending.user.id, !pending.user.is_available);
@@ -83,7 +85,9 @@ export default function Admin({ navigate }) {
         <h1 className="mt-2 text-3xl font-semibold">Vue d’ensemble</h1>
         <p className="mt-2 text-sm text-zinc-400">
           Gestion des comptes et métadonnées. Les contenus et noms de fichiers
-          restent chiffrés.
+          restent chiffrés. {profile.is_superadmin
+            ? "Votre rôle superadmin permet d’attribuer et de retirer le rôle admin."
+            : "Seul un superadmin peut attribuer ou retirer le rôle admin."}
         </p>
       </div>
       <ErrorNotice>{error}</ErrorNotice>
@@ -111,7 +115,7 @@ export default function Admin({ navigate }) {
           className="rounded-xl border border-amber-800 bg-amber-950/40 p-4"
         >
           <p className="text-sm">
-            {{ unlock: "Débloquer", promote: "Promouvoir administrateur", delete: "Supprimer définitivement", temporary: "Suspendre temporairement", state: pending.user.is_available ? "Désactiver jusqu’à réactivation" : "Réactiver" }[pending.action]}{" "}
+            {{ unlock: "Débloquer", promote: "Promouvoir administrateur", demote: "Rétrograder en utilisateur", delete: "Supprimer définitivement", temporary: "Suspendre temporairement", state: pending.user.is_available ? "Désactiver jusqu’à réactivation" : "Réactiver" }[pending.action]}{" "}
             le compte <strong>{pending.user.email}</strong> ?
           </p>
           {pending.action === "temporary" && (
@@ -124,10 +128,12 @@ export default function Admin({ navigate }) {
               </select>
             </label>
           )}
-          {(pending.action === "temporary" || pending.action === "state" || pending.action === "promote") && (
+          {(pending.action === "temporary" || pending.action === "state" || pending.action === "promote" || pending.action === "demote") && (
             <p className="mt-2 text-xs text-amber-200">
-              Les sessions existantes seront invalidées. Une suspension empêche aussi
-              les téléchargements des fichiers partagés par ce compte.
+              Les sessions existantes seront invalidées.
+              {(pending.action === "temporary" || pending.action === "state")
+                ? " Une suspension empêche aussi les téléchargements des fichiers partagés par ce compte."
+                : " Le compte devra se reconnecter pour prendre en compte son nouveau rôle."}
             </p>
           )}
           {pending.action === "delete" && (
@@ -182,7 +188,7 @@ export default function Admin({ navigate }) {
                     {u.email}
                     <p className="text-xs text-zinc-500">
                       #{u.id}
-                      {u.is_admin ? " · admin" : ""}
+                      {u.is_superadmin ? " · superadmin" : u.is_admin ? " · admin" : ""}
                     </p>
                   </td>
                   <td className="p-3">
@@ -228,7 +234,8 @@ export default function Admin({ navigate }) {
                       >
                         Débloquer
                       </button>
-                      {!u.is_admin && <button className={buttonClass} disabled={busy || !u.is_available || !u.mfa_enabled} title={!u.mfa_enabled ? "Le compte doit d’abord activer le MFA" : ""} onClick={() => ask(u, "promote")}>Promouvoir admin</button>}
+                      {profile.is_superadmin && !u.is_admin && <button className={buttonClass} disabled={busy || !u.is_available || !u.mfa_enabled} title={!u.mfa_enabled ? "Le compte doit d’abord activer le MFA" : ""} onClick={() => ask(u, "promote")}>Promouvoir admin</button>}
+                      {profile.is_superadmin && u.is_admin && !u.is_superadmin && u.id !== profile.id && <button className={buttonClass} disabled={busy} onClick={() => ask(u, "demote")}>Retirer admin</button>}
                       {!u.is_admin && <button className={buttonClass} disabled={busy} onClick={() => ask(u, "delete")}>Supprimer</button>}
                     </div>
                   </td>

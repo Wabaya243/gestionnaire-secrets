@@ -41,9 +41,23 @@ def test_legacy_migration_preserves_secrets(tmp_path):
     with engine.connect() as c:
         row = c.execute(text('SELECT auth_hash, kdf_salt, failed_attempts, is_admin, is_active, session_version FROM user')).one()
         assert tuple(row) == ('old-hash', 'old-salt', 2, 0, 1, 0)
+        assert c.execute(text('SELECT is_superadmin FROM user')).scalar_one() == 0
         assert c.execute(text('SELECT payload_enc FROM vaultitem')).scalar_one() == 'original-secret-blob'
-        assert c.execute(text('SELECT COUNT(*) FROM schema_revision')).scalar_one() == 2
+        assert c.execute(text('SELECT COUNT(*) FROM schema_revision')).scalar_one() == 3
         assert c.execute(text('SELECT suspended_until FROM user')).scalar_one() is None
+
+
+def test_superadmin_migration_does_not_elevate_existing_admin(tmp_path):
+    engine = create_engine(f'sqlite:///{tmp_path / "existing-admin.db"}')
+    with engine.begin() as c:
+        c.execute(text('CREATE TABLE "user" (id INTEGER PRIMARY KEY, email VARCHAR, is_admin BOOLEAN, is_active BOOLEAN)'))
+        c.execute(text("INSERT INTO user VALUES (1, 'existing@example.cd', 1, 1)"))
+        c.execute(text('CREATE TABLE schema_revision (revision VARCHAR(64) PRIMARY KEY)'))
+        c.execute(text("INSERT INTO schema_revision VALUES ('001_files_dashboards'), ('002_admin_controls')"))
+    migrate(engine); migrate(engine)
+    with engine.connect() as c:
+        assert tuple(c.execute(text('SELECT is_admin, is_superadmin FROM user')).one()) == (1, 0)
+        assert c.execute(text('SELECT COUNT(*) FROM schema_revision')).scalar_one() == 3
 
 
 def test_upload_idor_and_metadata_isolation(clients):
@@ -125,6 +139,10 @@ def test_admin_search_promote_requires_mfa_and_revokes_session(clients, db):
     assert admin.get('/api/admin/users?q=user1').json()['total'] == 1
     assert admin.get('/api/admin/users?q=%25').json()['total'] == 0  # literal percent, not SQL wildcard
     target_id = admin.get('/api/admin/users?q=user1').json()['items'][0]['id']
+    assert admin.post(f'/api/admin/users/{target_id}/promote').status_code == 403
+    with Session(db) as s:
+        operator = s.exec(select(User).where(User.email == 'user3@example.cd')).one()
+        operator.is_superadmin = True; s.add(operator); s.commit()
     assert admin.post(f'/api/admin/users/{target_id}/promote').status_code == 409
     with Session(db) as s:
         target = s.get(User, target_id); target.mfa_enabled = True; s.add(target); s.commit()
@@ -136,6 +154,69 @@ def test_admin_search_promote_requires_mfa_and_revokes_session(clients, db):
     assert admin.patch(f'/api/admin/users/{target_id}/state', json={'is_active': False}).status_code == 409
     assert admin.delete(f'/api/admin/users/{target_id}').status_code == 409
     assert admin.delete(f'/api/admin/users/{admin.get("/api/auth/me").json()["id"]}').status_code == 409
+
+
+def test_superadmin_demotes_accidental_admin_and_revokes_sessions(clients, db):
+    owner, recipient, _, admin = clients
+    target_id = admin.get('/api/admin/users?q=user1').json()['items'][0]['id']
+    with Session(db) as s:
+        operator = s.exec(select(User).where(User.email == 'user3@example.cd')).one()
+        operator.is_superadmin = True
+        target = s.get(User, target_id); target.mfa_enabled = True
+        s.add_all([operator, target]); s.commit()
+    assert owner.post(f'/api/admin/users/{target_id}/demote').status_code == 403
+    assert admin.post(f'/api/admin/users/{target_id}/demote').status_code == 409
+    assert admin.post(f'/api/admin/users/{target_id}/promote').status_code == 200
+    recipient.cookies.set('access_token', create_access_token(target_id, 1))
+    assert recipient.get('/api/admin/users').status_code == 200
+    assert recipient.get('/api/auth/me').json()['is_superadmin'] is False
+    assert recipient.post(f'/api/admin/users/{target_id}/demote').status_code == 403
+    assert admin.post(f'/api/admin/users/{target_id}/demote').status_code == 200
+    assert recipient.get('/api/auth/me').status_code == 401
+    recipient.cookies.set('access_token', create_access_token(target_id, 2))
+    assert recipient.get('/api/auth/me').json()['is_admin'] is False
+    assert recipient.get('/api/admin/users').status_code == 403
+    assert admin.post(f'/api/admin/users/{target_id}/demote').status_code == 409
+    assert admin.post(f'/api/admin/users/{admin.get("/api/auth/me").json()["id"]}/demote').status_code == 409
+    assert admin.get('/api/admin/users?q=user3').json()['items'][0]['is_superadmin'] is True
+
+
+def test_console_guards_last_superadmin(clients, db, monkeypatch):
+    import sys
+    from app import manage
+    _, _, _, admin = clients
+    uid = admin.get('/api/auth/me').json()['id']
+    monkeypatch.setattr(manage, 'engine', db)
+    monkeypatch.setattr(manage, 'init_db', lambda: None)
+    monkeypatch.setattr(sys, 'argv', ['manage', 'grant-superadmin', 'user3@example.cd'])
+    manage.main()
+    assert admin.get('/api/auth/me').status_code == 401
+    admin.cookies.set('access_token', create_access_token(uid, 1))
+    assert admin.get('/api/auth/me').json()['is_superadmin'] is True
+    for action in ('revoke-admin', 'revoke-superadmin'):
+        monkeypatch.setattr(sys, 'argv', ['manage', action, 'user3@example.cd'])
+        with pytest.raises(SystemExit):
+            manage.main()
+    with Session(db) as s:
+        another = s.exec(select(User).where(User.email == 'user0@example.cd')).one()
+        another.mfa_enabled = True; s.add(another); s.commit()
+    monkeypatch.setattr(sys, 'argv', ['manage', 'grant-superadmin', 'user0@example.cd'])
+    manage.main()
+    with Session(db) as s:
+        another = s.exec(select(User).where(User.email == 'user0@example.cd')).one()
+        another.is_active = False; s.add(another); s.commit()
+    monkeypatch.setattr(sys, 'argv', ['manage', 'revoke-superadmin', 'user3@example.cd'])
+    with pytest.raises(SystemExit):
+        manage.main()
+    with Session(db) as s:
+        another = s.exec(select(User).where(User.email == 'user0@example.cd')).one()
+        another.is_active = True; s.add(another); s.commit()
+    monkeypatch.setattr(sys, 'argv', ['manage', 'revoke-superadmin', 'user3@example.cd'])
+    manage.main()
+    assert admin.get('/api/auth/me').status_code == 401
+    admin.cookies.set('access_token', create_access_token(uid, 2))
+    assert admin.get('/api/auth/me').json()['is_superadmin'] is False
+    assert admin.get('/api/admin/overview').status_code == 200
 
 
 def test_timed_suspension_expires_and_reactivation_revokes_old_tokens(clients, db, public_key):

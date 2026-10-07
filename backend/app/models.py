@@ -27,6 +27,7 @@ class User(SQLModel, table=True):
     locked_until: Optional[datetime] = None       # Date/heure jusqu'à laquelle la connexion est bloquée
 
     is_admin: bool = Field(default=False)
+    is_superadmin: bool = Field(default=False)
     is_active: bool = Field(default=True)
     suspended_until: Optional[datetime] = None
     session_version: int = Field(default=0)

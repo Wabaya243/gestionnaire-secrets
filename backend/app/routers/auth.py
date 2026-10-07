@@ -178,6 +178,7 @@ def me(user: User = Depends(current_user)):
     return MeOut(
         id=user.id,
         is_admin=user.is_admin,
+        is_superadmin=user.is_superadmin,
         email=user.email,
         mfa_enabled=user.mfa_enabled,
         created_at=user.created_at,

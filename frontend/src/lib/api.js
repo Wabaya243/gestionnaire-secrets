@@ -88,6 +88,7 @@ export const fetchAdminActivity = () => request('/admin/activity');
 export const setAccountState = (id, isActive, suspendMinutes = null) => request(`/admin/users/${id}/state`, { method: 'PATCH', body: { is_active: isActive, suspend_minutes: suspendMinutes } });
 export const unlockAccount = id => request(`/admin/users/${id}/unlock`, { method: 'POST' });
 export const promoteAccount = id => request(`/admin/users/${id}/promote`, { method: 'POST' });
+export const demoteAccount = id => request(`/admin/users/${id}/demote`, { method: 'POST' });
 export const deleteAccount = id => request(`/admin/users/${id}`, { method: 'DELETE' });
 export const fetchSharingKeys = () => request('/files/keys/me');
 export const saveSharingKeys = body => request('/files/keys/me', { method: 'POST', body });

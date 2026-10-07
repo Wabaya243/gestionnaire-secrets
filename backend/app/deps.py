@@ -55,3 +55,9 @@ def admin_user(user: User = Depends(current_user)) -> User:
     if not user.mfa_enabled:
         raise HTTPException(status_code=403, detail="Activez la double authentification avant d’administrer")
     return user
+
+
+def superadmin_user(user: User = Depends(admin_user)) -> User:
+    if not user.is_superadmin:
+        raise HTTPException(status_code=403, detail="Accès superadministrateur requis")
+    return user
