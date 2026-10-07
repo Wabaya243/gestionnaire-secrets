@@ -2,13 +2,14 @@
 
 Projet du cours **Protocoles de Sécurité Réseau** — Master 1, Université de Kinshasa (2026).
 
-- [Application déployée](https://gestionnaire-secrets.onrender.com)
-- [Dépôt GitHub](https://github.com/Wabaya243/gestionnaire-secrets)
-- [Conception et défense des choix de sécurité](docs/EXTENSIONS_ZERO_KNOWLEDGE.md)
+- **Site déployé** : https://gestionnaire-secrets.onrender.com
+- **Dépôt** : https://github.com/Wabaya243/gestionnaire-secrets
 
-## Groupe 13
+---
 
-| Membre |
+## Membres du groupe 13
+
+| Nom |
 |---|
 | THEYTHEY KAMBALE DIVIN |
 | MUELA MPIANA POPOL |
@@ -16,155 +17,245 @@ Projet du cours **Protocoles de Sécurité Réseau** — Master 1, Université d
 | MBENGA EZIBE ANDERSON |
 | MANZITA LUZOLO FRANCK |
 
-## Fonctionnalités
+---
 
-Le coffre stocke des secrets texte et des fichiers chiffrés. Chaque utilisateur
-dispose d'un tableau de bord avec ses compteurs, son activité récente et l'état
-de sa double authentification (MFA). Il peut activer ou désactiver le MFA avec
-une application TOTP ; la désactivation exige un code valide.
+## Objectif
 
-Un fichier peut être partagé avec un autre utilisateur. Le destinataire initialise
-d'abord **Fichiers → Activer la réception sécurisée** sur son propre compte, puis
-communique son empreinte de clé publique à l'expéditeur par un canal indépendant.
-L'expéditeur vérifie cette empreinte avant de partager. Un compte ne peut pas se
-partager un fichier à lui-même. Révoquer un partage empêche les téléchargements
-futurs, sans effacer une copie déjà téléchargée.
+Coffre-fort en ligne permettant de stocker des secrets (mots de passe, clés d'API)
+protégés par un unique mot de passe maître.
 
-Le tableau d'administration présente uniquement des **métadonnées** : adresses,
-dates, nombres de secrets et de fichiers, volume chiffré et journal d'activité.
-Un administrateur ayant activé le MFA peut rechercher des comptes, les débloquer,
-les suspendre pour 1 heure, 24 heures ou 7 jours, les désactiver jusqu'à
-réactivation et supprimer définitivement un compte ordinaire. Seul un
-**superadministrateur** peut promouvoir un compte actif avec MFA en administrateur
-ou retirer le rôle admin. Les sessions du compte visé sont invalidées après
-un changement de rôle ou une suspension. Les administrateurs ne peuvent pas
-être désactivés ou supprimés depuis l'interface.
+La propriété centrale est le **zero-knowledge** : toute la cryptographie s'exécute
+dans le navigateur. Le serveur stocke des données chiffrées qu'il est structurellement
+incapable de lire, et ne reçoit jamais le mot de passe maître.
 
-## Architecture et sécurité
+---
 
-| Couche | Technologies |
+## Mécanismes de sécurité (protocoles)
+
+| Mécanisme | Rôle | Menace traitée |
+|---|---|---|
+| Argon2id (client + serveur) | Dérivation de clé memory-hard | Force brute hors ligne, tables arc-en-ciel |
+| AES-GCM 256 | Chiffrement authentifié | Lecture et altération des secrets |
+| TOTP (RFC 6238) | Second facteur | Vol du mot de passe maître |
+| Verrouillage après échecs | 5 tentatives, 15 min | Force brute en ligne |
+| zxcvbn | Indicateur de robustesse | Mot de passe maître faible |
+| HTTPS/TLS | Chiffrement du transport | Interception réseau |
+| Cookie HttpOnly + CSP | Protection session | Vol de session, XSS |
+
+---
+
+## Architecture
+
+### Chaîne cryptographique
+
+Mot de passe maître (navigateur)
+│
+├── Argon2id("auth|" + sel) ──> auth_hash ──> serveur ──> Argon2id ──> base
+│
+└── Argon2id("enc|" + sel) ──> clé AES-256 (reste dans le navigateur)
+│
+AES-GCM(secret, nonce)
+│
+[nonce][chiffré][tag] ──> base
+
+
+La **séparation de domaine** garantit que le hash transmis au serveur ne révèle
+rien sur la clé de chiffrement. Le **double hachage** garantit qu'un vol de la
+base ne permet pas de rejouer le hash volé pour s'authentifier.
+
+### Stack
+
+| Couche | Technologie |
 |---|---|
-| Frontend | React, Vite, WebCrypto, hash-wasm, zxcvbn, Tailwind CSS |
-| Backend | FastAPI, SQLModel, argon2-cffi, PyJWT, pyotp, slowapi |
-| Base | SQLite en développement, PostgreSQL en production |
-| Hébergement | Render, service FastAPI servant également le build React |
+| Frontend | React, Vite, hash-wasm, WebCrypto, zxcvbn |
+| Backend | FastAPI, SQLModel, argon2-cffi, pyotp, slowapi, PyJWT |
+| Base | SQLite (dev), PostgreSQL (prod) |
+| Hébergement | Render (Frankfurt) |
 
-Le **mot de passe maître reste dans le navigateur**. Deux dérivations Argon2id
-indépendantes utilisent les domaines `auth|` et `enc|` avec un sel propre au compte :
+### Modèle de données
 
-1. La valeur d'authentification est envoyée au serveur, qui la hache une seconde
-   fois avec Argon2id avant de la stocker. Un hash volé en base ne peut donc pas
-   être rejoué tel quel pour se connecter.
-2. La clé AES-256 du coffre reste en mémoire dans le navigateur. Elle n'est
-   jamais transmise au serveur ni conservée dans `localStorage` ou `sessionStorage`.
+`user` — email, kdf_salt (public), auth_hash, totp_secret, mfa_enabled,
+failed_attempts, locked_until
 
-Les secrets et les fichiers sont chiffrés localement avec AES-GCM et un nonce
-neuf à chaque opération. Chaque fichier possède sa propre clé AES aléatoire ;
-pour un partage, seule cette clé est enveloppée avec la clé publique RSA-3072
-du destinataire. Sa clé privée n'est stockée qu'après chiffrement avec sa clé
-de coffre. Le serveur conserve les blobs chiffrés, leurs tailles et les relations
-de partage, sans disposer des clés nécessaires au déchiffrement.
+`vaultitem` — user_id, label_enc, payload_enc
+(le libellé est chiffré lui aussi)
 
-Les autres protections comprennent le MFA TOTP, un verrouillage persistant après
-5 échecs pendant 15 minutes, des cookies JWT `HttpOnly` et `SameSite=Lax`, une
-CSP, des limites de débit et des filtres de propriété dans les requêtes SQL.
-Les sessions durent au maximum 15 minutes ; leur version est vérifiée en base
-pour permettre une révocation immédiate.
+### Défenses spécifiques
 
-**Limite importante :** le secret TOTP est conservé côté serveur pour vérifier
-les codes. Une faille XSS ou un serveur servant du JavaScript malveillant peut
-également compromettre une session déverrouillée. Les métadonnées de compte,
-les tailles et les relations de partage restent visibles du serveur. Le mot
-de passe maître perdu ne peut pas être récupéré par l'administrateur.
+- **Anti-énumération** : sel factice déterministe pour email inconnu, messages d'erreur identiques
+- **Anti-timing** : hachage Argon2 exécuté même si l'utilisateur n'existe pas
+- **IDOR** : filtre `user_id` dans la requête SQL, réponse 404 jamais 403
+- **XSS** : clé AES non extractible, JWT en cookie `HttpOnly`, CSP restrictive
+- **CSRF** : `SameSite=Lax`, service mono-origine
+
+---
 
 ## Installation locale
 
-Prérequis : Python 3.12, Node.js et npm. Depuis la racine du dépôt :
+### Prérequis
 
-```powershell
+- Python 3.12, conda
+- Node.js 20+, npm
+
+### Backend
+
+```bash
 cd backend
 conda create -n secrets-back python=3.12 -y
 conda activate secrets-back
 pip install -r requirements.txt
-Copy-Item .env.example .env
-python -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-Renseigner dans `backend/.env` une valeur `JWT_SECRET` générée par la dernière
-commande, `DATABASE_URL=sqlite:///./vault.db` et `ENVIRONMENT=development`.
-Puis démarrer le backend :
-
-```powershell
+cp .env.example .env   # renseigner JWT_SECRET
 uvicorn app.main:app --reload --port 8000
 ```
 
-Dans un **second terminal**, depuis la racine du dépôt :
+Générer un secret JWT :
 
-```powershell
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+### Frontend
+
+```bash
 cd frontend
-npm ci
+npm install
 npm run dev
 ```
 
-Ouvrir `http://localhost:5173`. La documentation API locale est à
-`http://127.0.0.1:8000/docs`. Vite relaie les appels `/api` au backend.
-Le fichier `.env`, la base SQLite, `node_modules` et les builds sont ignorés
-par Git. Sous Linux/macOS, remplacer `Copy-Item` par `cp`.
+Interface : `http://localhost:5173` — API : `http://127.0.0.1:8000/docs`
 
-## Premier superadministrateur
+### Variables d'environnement
 
-Créer un compte dans le navigateur et activer son MFA. Dans le dossier `backend`,
-avec le même environnement Python et la même base que le serveur :
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | URL de la base |
+| `JWT_SECRET` | Secret de signature des jetons (obligatoire) |
+| `JWT_EXPIRE_MINUTES` | Durée de vie des jetons (défaut : 15) |
+| `ENVIRONMENT` | `development` ou `production` |
 
-```powershell
-python -m app.manage grant-superadmin adresse-du-compte@example.cd
-```
+Aucun secret n'est versionné : `.env` est exclu par `.gitignore`.
 
-Se déconnecter puis se reconnecter. Ce superadmin pourra promouvoir et
-rétrograder les administrateurs depuis l'interface. Les administrateurs déjà
-présents ne deviennent **pas** superadmins automatiquement lors de la migration :
-attribuer explicitement ce rôle à l'un d'eux avec la même commande. Le dernier
-superadmin ne peut pas perdre ce rôle. Aucun compte privilégié par défaut
-n'est créé.
+---
 
-## Vérification
+## Déploiement
 
-Depuis la racine du dépôt, avec les dépendances de test installées :
+Hébergé sur **Render** (Frankfurt) en service unique : FastAPI sert l'API
+et les fichiers statiques du build React. Même origine → pas de CORS,
+cookie `SameSite=Lax`.
 
-```powershell
-pip install -r backend/requirements-dev.txt
-python -m pytest backend/tests -q
-cd frontend
-npm ci
-npm test
-npm run build
-npm run lint
-```
+| Élément | Valeur |
+|---|---|
+| Build Command | `./build.sh` |
+| Start Command | `cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Base | PostgreSQL 16 (plan gratuit, expire 30 jours) |
+| HTTPS/TLS | Certificat automatique Render |
 
-Les tests API couvrent les accès entre comptes, les migrations, les sessions,
-le MFA, le partage, la recherche et les actions d'administration. Les tests
-JavaScript exercent la cryptographie côté navigateur. Pour une démonstration
-manuelle, utiliser deux comptes distincts et vérifier dans l'onglet Réseau que
-le serveur ne reçoit ni nom de fichier en clair ni clé AES. Utiliser seulement
-des données fictives pour tester la suppression d'un compte.
+Le script `build.sh` compile le frontend, copie le résultat dans
+`backend/static`, puis installe les dépendances Python.
 
-## Déploiement et limites d'exploitation
+> Le plan gratuit met le service en veille après 15 min d'inactivité.
+> Premier chargement : 30 à 50 secondes.
 
-Sur Render, le build `./build.sh` compile React dans `backend/static` et installe
-les dépendances Python. La commande de démarrage est :
+---
+
+## Tests
+
+Tous les tests ont été menés sur l'application déployée, en navigation privée,
+avec des données fictives.
+
+| Propriété vérifiée | Méthode | Résultat |
+|---|---|---|
+| Mot de passe non transmis | Inspection onglet Réseau (F12) | Absent de toutes les requêtes |
+| Sels uniques | Deux comptes, même mot de passe | Condensats sans ressemblance |
+| Condensat non rejouable | Soumission de `auth_hash` stocké | Connexion refusée (401) |
+| Données illisibles en base | Lecture directe PostgreSQL | Blobs base64 opaques |
+| Verrouillage | 5 échecs consécutifs | 423 au sixième essai |
+| Second facteur | Connexion après activation MFA | Code TOTP exigé |
+
+---
+
+## Calibration d'Argon2id
+
+Mesures relevées dans le navigateur (machine de développement) :
+
+| Mémoire | Itérations | Durée |
+|---|---|---|
+| 19 Mio | 3 | 67 ms |
+| 64 Mio | 3 | 195 ms |
+| 64 Mio | 10 | *(à compléter)* |
+
+Paramètres retenus : `m=64 Mio, t=10, p=1`.
+
+---
+
+## Identifiants de démonstration
+
+- **Email** : `demo@exemple.cd`
+- **Mot de passe maître** : *Demotest01*
+
+Ce compte contient uniquement des données fictives.
+La double authentification **n'est pas activée** sur ce compte afin que
+le correcteur puisse se connecter sans application TOTP.
+
+---
+
+## Limites connues
+
+- Mot de passe maître irrécupérable (conséquence du zero-knowledge)
+- Secret TOTP stocké en clair côté serveur (nécessaire à la vérification)
+- XSS dans l'application donnerait accès à la clé en mémoire
+- Serveur malveillant pourrait servir un JavaScript modifié
+- Rotation des identités de partage et signature asymétrique des expéditeurs non implémentées
+- Métadonnées (comptes, tailles, dates et relations de partage) visibles du serveur
+- Base PostgreSQL gratuite expire 30 jours après création
+
+---
+
+## Dépendances externes
+
+`FastAPI`, `SQLModel`, `argon2-cffi`, `PyJWT`, `pyotp`, `slowapi`,
+`psycopg`, `React`, `Vite`, `hash-wasm`, `zxcvbn`, `qrcode.react`,
+`lucide-react`, `tailwindcss`
+
+
+## Extension : tableaux de bord et fichiers chiffrés
+
+- **Tableau de bord utilisateur** : compteurs, stockage, état MFA et activité récente.
+- **Administration** : vue globale, liste paginée des comptes, désactivation/réactivation
+  avec invalidation des sessions, déblocage et journal des actions ; MFA obligatoire.
+- **Fichiers** : AES-256-GCM dans le navigateur, noms et métadonnées également chiffrés,
+  une clé par fichier, blobs stockés en base (10 Mio/fichier, 100 Mio/compte par défaut).
+- **Partage** : enveloppe RSA-3072-OAEP/SHA-256 de la clé du fichier pour le destinataire,
+  clé privée protégée par la clé du coffre, comparaison d'empreinte par un canal indépendant,
+  révocation des téléchargements futurs.
+- **MFA** : activation et désactivation depuis le tableau de bord ; la désactivation
+  demande un code TOTP valide et efface l'ancien secret TOTP.
+- **Administration** : recherche par adresse, promotion avec MFA, suspension pour 1 heure,
+  24 heures ou 7 jours, désactivation jusqu’à réactivation, suppression définitive des
+  comptes ordinaires avec leurs données chiffrées. Une nouvelle connexion est exigée
+  après promotion ou suspension. Les admins ne peuvent pas être supprimés via l’interface.
+- **Migration** : révisions additives `001_files_dashboards` et `002_admin_controls` appliquées au démarrage,
+  sans modification des secrets chiffrés existants. Sauvegarder la base avant déploiement.
+
+L'admin ne peut jamais lire les secrets ou fichiers d'autres comptes par son rôle.
+Le partage de fichiers est un accès accordé au destinataire ; il conserve les données
+chez l'expéditeur. Révoquer ne supprime pas les copies déjà téléchargées.
+Un compte déjà inscrit doit d'abord ouvrir **Fichiers → Activer la réception sécurisée**
+dans son propre navigateur avant de pouvoir recevoir. Le bouton du compte expéditeur
+ne crée que la clé de réception de l'expéditeur.
+On ne peut pas partager un fichier avec sa propre adresse : il figure déjà dans
+« Mes fichiers ». Pour tester, envoyer depuis un compte vers un second compte.
+
+Le compte administrateur doit être créé depuis le navigateur et avoir activé son MFA.
+Depuis le dossier `backend`, dans la console serveur :
 
 ```bash
-cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+python -m app.manage grant-admin ton-adresse@example.cd
 ```
 
-Configurer `DATABASE_URL`, `JWT_SECRET` et `ENVIRONMENT=production` comme
-variables privées du service. Sauvegarder PostgreSQL avant tout déploiement :
-les migrations additives `001_files_dashboards`, `002_admin_controls` et
-`003_superadmin_role`
-s'exécutent au démarrage. Le volume de fichier est limité par défaut à 10 Mio
-par fichier et 100 Mio par compte.
+Puis se reconnecter. Il n'existe pas de compte admin par défaut.
+Un administrateur déjà connecté peut ensuite promouvoir d’autres comptes actifs ayant
+activé le MFA depuis son tableau de bord ; ces comptes doivent se reconnecter.
 
-Les éventuels accès de démonstration destinés au professeur doivent être
-transmis **séparément**, jamais publiés dans le dépôt. Voir
-[la documentation de conception](docs/EXTENSIONS_ZERO_KNOWLEDGE.md) pour le
-protocole de partage, les limites et les scénarios de soutenance.
+La conception, les limites, les commandes de vérification et les réponses pour
+la défense orale sont détaillées dans [docs/EXTENSIONS_ZERO_KNOWLEDGE.md](docs/EXTENSIONS_ZERO_KNOWLEDGE.md).
